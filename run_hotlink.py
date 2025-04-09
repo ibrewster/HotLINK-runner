@@ -1,17 +1,18 @@
 import json
 import time
 
-import psycopg
-
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import lru_cache
 
-import config
 import hotlink
 import pandas
+import psycopg
 
 from hotlink import support_functions
+
+import config
+
 
 ########## CONSTANTS #########
 LOCATIONS = ['Spurr']
@@ -153,9 +154,7 @@ def get_start(datastreams):
     return latest_timestamps
                 
             
-def run_hotlink(loc, elev, dates, sensor, mapping):
-    results, meta = hotlink.get_results(loc, elev, dates, sensor)
-    
+def save_results(results, mapping):
     # Save results to PREEVENTS database
     with preevents_cursor(readonly=False) as cursor:
         for _, row in results.iterrows():
@@ -172,6 +171,9 @@ def run_hotlink(loc, elev, dates, sensor, mapping):
                         datastream_id, timestamp, categoryvalue, last_updated
                     )
                     VALUES (%s, %s, %s, now())
+                    ON CONFLICT (datastream_id, timestamp)
+                    DO NOTHING
+                    --UPDATE SET categoryvalue=EXCLUDED.categoryvalue, last_updated=now()
                     """,
                     (metadata_datastream, timestamp, metadata_json)
                 )
@@ -185,6 +187,8 @@ def run_hotlink(loc, elev, dates, sensor, mapping):
                             """
                             INSERT INTO datavalues (datastream_id, timestamp, datavalue, last_updated)
                             VALUES (%s, %s, %s, now())
+                            ON CONFLICT (datastream_id, timestamp)
+                            DO NOTHING
                             """,
                             (datastream_id, timestamp, float(row[result_key]))
                         )
@@ -210,8 +214,12 @@ def main():
             start_time = start_times[sensor].strftime('%Y-%m-%dT%H:%M:00')
             dates = (start_time, end_time)
             print(f"****Running {volc_name} {sensor} for {dates}")
-            
-            run_hotlink(volc_name, elev, dates, sensor, datastream_mapping)
+            results, meta = hotlink.get_results(loc, elev, dates, sensor)
+            if meta['Result Count'] > 0:
+                save_results(results, datastream_mapping)
+            else:
+                print(f"No results to save for {volc_name} {sensor} in {dates}")
+                
         print(f"Ran HotLINK for {loc} in {time.time() - t1} seconds")
             
 if __name__ == "__main__":
