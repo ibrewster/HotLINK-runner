@@ -2,7 +2,7 @@ import json
 import time
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import timedelta
 from functools import lru_cache
 
 import hotlink
@@ -122,14 +122,14 @@ def get_volc(vent):
     return volc.iloc[0]
         
    
-def get_start(datastreams):
+def get_oldest(datastreams):
     # Group datastream_ids by sensor
     sensor_ids = {"viirs": [], "modis": []}
     for (result_key, sensor), datastream_id in datastreams.items():
         if sensor in sensor_ids:
             sensor_ids[sensor].append(datastream_id)
             
-    latest_timestamps = {}
+    oldest_timestamps = {}
     
     # Timestamps in the database are based on the filename, which is in 
     # turn based on pass start. Searches, on the other hand, are based on 
@@ -137,21 +137,21 @@ def get_start(datastreams):
     # but we may need to adjust.
     QUERY = """
     SELECT COALESCE(
-        MAX(timestamp)+'15 minute'::interval,
-        now() - '7 days'::interval
-    ) as latest_timestamp
+        MIN(timestamp)-'15 minute'::interval,
+        now()
+    ) as oldest_timestamp
     FROM datavalues
     WHERE datastream_id = ANY(%s)
-    AND timestamp >= now() - '7 days'::interval
+    AND timestamp <= now() - '7 days'::interval
 """
     with preevents_cursor() as cursor:
         for sensor, ids in sensor_ids.items():
             if ids: # Should always be true
                 cursor.execute(QUERY, (ids,))
                 result = cursor.fetchone()
-                latest_timestamps[sensor] = result[0]
+                oldest_timestamps[sensor] = result[0]
     
-    return latest_timestamps
+    return oldest_timestamps
                 
             
 def save_results(results, mapping):
@@ -198,7 +198,6 @@ def save_results(results, mapping):
     
 
 def main():
-    end_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:00')
     for loc in LOCATIONS:
         t1 = time.time()        
         
@@ -208,10 +207,12 @@ def main():
         volc_name = volc['name']
         
         datastream_mapping = get_datastream_mapping(volc_name)
-        start_times = get_start(datastream_mapping)
+        end_times = get_oldest(datastream_mapping)
         
         for sensor in ['viirs', 'modis']:
-            start_time = start_times[sensor].strftime('%Y-%m-%dT%H:%M:00')
+            end_time = end_times[sensor].strftime('%Y-%m-%dT%H:%M:00')
+            start_time = end_times[sensor] - timedelta(days=30)
+            start_time = start_time.strftime('%Y-%m-%dT%H:%M:00')
             dates = (start_time, end_time)
             print(f"****Running {volc_name} {sensor} for {dates}")
             results, meta = hotlink.get_results(loc, elev, dates, sensor)
