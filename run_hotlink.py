@@ -157,6 +157,7 @@ def get_start(datastreams):
             
 def save_results(results, mapping):
     # Save results to PREEVENTS database
+    results['Day/Night Flag'] = (results['Day/Night Flag'] == 'D').astype(int)
     with preevents_cursor(readonly=False) as cursor:
         for _, row in results.iterrows():
             sensor = row["Sensor"].lower() # Pull from results for good measure
@@ -179,6 +180,7 @@ def save_results(results, mapping):
                     (metadata_datastream, timestamp, metadata_json)
                 )
             # Save the value records
+            row['Day/Night Flag'] = 1 if row['Day/Night Flag'] == 'D' else 0
             for result_key in VARIABLE_NAME_MAP.keys():
                 if result_key in row and not pandas.isna(row[result_key]):
                     key = (result_key, sensor)
@@ -216,6 +218,7 @@ def main():
             dates = (start_time, end_time)
             print(f"****Running {volc_name} {sensor} for {dates}")
             results, meta = hotlink.get_results(loc, elev, dates, sensor)
+            
             if meta['Result Count'] > 0:
                 save_results(results, datastream_mapping)
             else:
