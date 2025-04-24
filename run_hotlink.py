@@ -29,6 +29,7 @@ VARIABLE_NAME_MAP = {
     "TIR Hotspot Max Brightness Temperature": "Hotspot TIR Maximum Brightness Temperature",
     "Solar Zenith": "Solar Zenith Angle",
     "Solar Azimuth": "Solar Azimuth Angle",
+    "Day/Night Flag":"Day/Night Flag (N/D)",
     # Metadata needs special handling (see below)
 }
 #############################
@@ -162,7 +163,7 @@ def save_results(results, mapping):
             timestamp = row["Date"]
             
             # Save the metadata record
-            metadata = {"day_night": row["Day/Night Flag"], "satellite": row["Satellite"], "sensor": row["Sensor"]}
+            metadata = {"satellite": row["Satellite"], "sensor": row["Sensor"]}
             metadata_json = json.dumps(metadata)
             metadata_datastream = mapping.get(("Metadata", sensor))
             if metadata_datastream:
