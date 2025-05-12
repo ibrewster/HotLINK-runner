@@ -1,4 +1,4 @@
-git+https://github.com/ibrewster/HotLINK.git@integrated
+git+https://github.com/ibrewster/HotLINK.git@avo
 pandas
 psycopg
 
