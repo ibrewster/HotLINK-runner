@@ -190,7 +190,6 @@ def save_results(results, mapping):
                     (metadata_datastream, timestamp, metadata_json)
                 )
             # Save the value records
-            row['Day/Night Flag'] = 1 if row['Day/Night Flag'] == 'D' else 0
             for result_key in VARIABLE_ID_MAP.keys():
                 if result_key in row and not pandas.isna(row[result_key]):
                     key = (result_key, sensor)
