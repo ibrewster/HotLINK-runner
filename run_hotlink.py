@@ -222,6 +222,7 @@ def save_results(results, mapping):
 def main():
     end_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:00')
     for loc in LOCATIONS:
+        print(f"Beginning processing of {loc}")
         t1 = time.time()
 
         # Make sure we are using the canonical volcano.
