@@ -166,7 +166,7 @@ def get_start(datastreams):
 
 def save_results(results, mapping):
     # Save results to PREEVENTS database
-    results['Day/Night Flag'] = (results['Day/Night Flag'] == 'D').astype(int)
+    results['Day/Night Flag'] = results['Day/Night Flag'].apply(lambda x: json.dumps({"day_night": x}))
     with preevents_cursor(readonly=False) as cursor:
         for _, row in results.iterrows():
             sensor = row["Sensor"].lower() # Pull from results for good measure
@@ -195,14 +195,24 @@ def save_results(results, mapping):
                     key = (result_key, sensor)
                     datastream_id = mapping.get(key)
                     if datastream_id:
-                        cursor.execute(
-                            """
-                            INSERT INTO datavalues (datastream_id, timestamp, datavalue, last_updated)
+                        if result_key == 'Day/Night Flag':
+                            datafield = "categoryvalue"
+                            datavalue = row[result_key]
+                        else:
+                            datafield = "datavalue"
+                            datavalue = float(row[result_key])
+
+                        sql = psycopg.sql.SQL("""
+                            INSERT INTO datavalues (datastream_id, timestamp, {datafield}, last_updated)
                             VALUES (%s, %s, %s, now())
                             ON CONFLICT (datastream_id, timestamp)
                             DO NOTHING
-                            """,
-                            (datastream_id, timestamp, float(row[result_key]))
+                            """).format(
+                                   datafield = psycopg.sql.Identifier(datafield)
+                            )
+                        cursor.execute(
+                            sql,
+                            (datastream_id, timestamp, datavalue)
                         )
                     else:
                         print(f"Warning: No datastream_id for {result_key} with sensor {sensor}")
@@ -219,6 +229,7 @@ def main():
         elev = volc['elev']
         volc_name = volc['name']
 
+        print("Getting datastreams for", volc_name)
         datastream_mapping = get_datastream_mapping(volc_name)
         start_times = get_start(datastream_mapping)
 
