@@ -1,6 +1,8 @@
 import json
+import pathlib
 import time
 
+from collections import defaultdict
 from contextlib import contextmanager
 from functools import lru_cache
 
@@ -14,7 +16,7 @@ import hotlink_local
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Spurr']
+LOCATIONS = ['Redoubt', 'Spurr', 'Veniaminof', 'Semisopochnoi']
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
@@ -173,26 +175,78 @@ def save_results(results, mapping):
                         print(f"Warning: No datastream_id for {result_key} with sensor {sensor}")
         cursor.connection.commit()
 
-
+def load_file_list() -> list[str| None, list[list[pathlib.PosixPath]]]:
+    # Get a list of files
+    input_path = pathlib.Path(config.DATA_PATH)
+    df = None
+    sat = None
+    
+    if not input_path.exists():
+        return sat, [] # No input directory, no input files
+    
+    file_types = defaultdict(list)
+    files = list(input_path.glob('*.h5'))
+    for file in files:
+        ftype = file.name.split('_')[0]
+        file_types[ftype].append(file)
+        
+    viirs_keys = {'SVI04', 'SVI05', 'GITCO'}
+    if viirs_keys.issubset(file_types):
+        sat = 'viirs'
+        df = hotlink_local.match_viirs(
+            file_types['SVI04'],
+            file_types['SVI05'],
+            file_types['GITCO']
+        )
+  
+    unexpected = set(file_types) - viirs_keys
+    if unexpected:
+        print(f"Warning: Found unexpected file types: {unexpected}")
+        # sat = 'modis'
+        # df = pandas.DataFrame({'file_1': files,})
+        
+    if df is None or df.empty:
+        return sat, []
+    
+    # Extract the final list of files
+    results = df.to_numpy().tolist()
+    return sat, results
+    
 def main():
-    for loc in LOCATIONS:
-        t1 = time.time()
-
-        # Make sure we are using the canonical volcano.
-        volc = get_volc(loc)
-        elev = volc['elev']
-        volc_name = volc['name']
-
-        datastream_mapping = get_datastream_mapping(volc_name)
-        results, meta = hotlink_local.get_results(loc, elev)
-
-        if meta['Result Count'] > 0:
-            pass
-            # save_results(results, datastream_mapping)
-        else:
-            print(f"No results to save for {volc_name} {sensor} in {dates}")
-
-        print(f"Ran HotLINK for {loc} in {time.time() - t1} seconds")
+    print("Beginning processing")
+    sat, files = load_file_list()
+    print(f"Found {len(files)} file(s) of type {sat} to process")
+    for file_list in files:
+        print(f"Processing {file_list[0].name}")
+        
+        for loc in LOCATIONS:
+            t1 = time.time()
+    
+            # Make sure we are using the canonical volcano.
+            volc = get_volc(loc)
+            elev = volc['elev']
+            volc_name = volc['name']
+    
+            datastream_mapping = get_datastream_mapping(volc_name)
+            try:
+                results, meta = hotlink_local.get_results(loc, elev, file_list, sat)
+            except hotlink_local.CoverageError as e:
+                print(f"Insufficient coverage for volcano {volc_name}, {sat}. {e}")
+                continue
+    
+            if not results.empty and meta['Result Count'] > 0:
+                pass
+                # save_results(results, datastream_mapping)
+            else:
+                print(f"No results to save for {volc_name} {sat}")
+    
+            print(f"Ran HotLINK for {loc} in {time.time() - t1} seconds")
+            
+        print(f"All volcs processed for file {file_list[0].name} Removing source files")
+        for file in file_list:
+            file.unlink()
+            
+    print("All files processed.")
 
 if __name__ == "__main__":
     main()
