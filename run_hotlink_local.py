@@ -185,7 +185,7 @@ def load_file_list() -> list[str| None, list[list[pathlib.PosixPath]]]:
         return sat, [] # No input directory, no input files
     
     file_types = defaultdict(list)
-    files = list(input_path.glob('*.h5'))
+    files = list(input_path.rglob('*.h5'))
     for file in files:
         ftype = file.name.split('_')[0]
         file_types[ftype].append(file)
@@ -202,8 +202,6 @@ def load_file_list() -> list[str| None, list[list[pathlib.PosixPath]]]:
     unexpected = set(file_types) - viirs_keys
     if unexpected:
         print(f"Warning: Found unexpected file types: {unexpected}")
-        # sat = 'modis'
-        # df = pandas.DataFrame({'file_1': files,})
         
     if df is None or df.empty:
         return sat, []

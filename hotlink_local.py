@@ -176,7 +176,6 @@ def load_and_resample(
     numpy.save(out_file, data)
 
 
-_process_func: functools.partial = None
 def preprocess(
     vent,
     results,
@@ -184,8 +183,6 @@ def preprocess(
     folder='./data',
     output=pathlib.Path('./Output')
 ):
-    global _process_func
-
     dest = pathlib.Path(folder)
 
     area=area_definition('name',vent,sat)
