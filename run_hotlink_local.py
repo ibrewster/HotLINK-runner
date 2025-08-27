@@ -130,6 +130,38 @@ def get_volc(vent):
 
     return volc.iloc[0]
 
+def get_start(datastreams):
+    # Group datastream_ids by sensor
+    viirs = DEVICE_ID_MAP['viirs']
+    modis = DEVICE_ID_MAP['modis']
+    sensor_ids = {viirs: [], modis: []}
+    for (result_key, sensor), datastream_id in datastreams.items():
+        if sensor in sensor_ids:
+            sensor_ids[sensor].append(datastream_id)
+
+    latest_timestamps = {}
+
+    # Timestamps in the database are based on the filename, which is in
+    # turn based on pass start. Searches, on the other hand, are based on
+    # pass *end*, which is somewhat later. Hopefully 15 minutes is sufficient,
+    # but we may need to adjust.
+    QUERY = """
+    SELECT COALESCE(
+        MAX(timestamp)+'15 minute'::interval,
+        now() - '7 days'::interval
+    ) as latest_timestamp
+    FROM datavalues
+    WHERE datastream_id = ANY(%s)
+    AND timestamp >= now() - '7 days'::interval
+"""
+    with preevents_cursor() as cursor:
+        for sensor, ids in sensor_ids.items():
+            if ids: # Should always be true
+                cursor.execute(QUERY, (ids,))
+                result = cursor.fetchone()
+                latest_timestamps[sensor] = result[0]
+
+    return latest_timestamps
 
 def save_results(results, mapping):
     # Save results to PREEVENTS database
@@ -175,7 +207,7 @@ def save_results(results, mapping):
                         print(f"Warning: No datastream_id for {result_key} with sensor {sensor}")
         cursor.connection.commit()
 
-def load_file_list() -> list[str| None, list[list[pathlib.PosixPath]]]:
+def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
     # Get a list of files
     input_path = pathlib.Path(config.DATA_PATH)
     df = None
@@ -199,9 +231,9 @@ def load_file_list() -> list[str| None, list[list[pathlib.PosixPath]]]:
             file_types['GITCO']
         )
   
-    unexpected = set(file_types) - viirs_keys
-    if unexpected:
-        print(f"Warning: Found unexpected file types: {unexpected}")
+    # unexpected = set(file_types) - viirs_keys
+    # if unexpected:
+        # print(f"Warning: Found unexpected file types: {unexpected}")
         
     if df is None or df.empty:
         return sat, []
@@ -213,9 +245,13 @@ def load_file_list() -> list[str| None, list[list[pathlib.PosixPath]]]:
 def main():
     print("Beginning processing")
     sat, files = load_file_list()
-    print(f"Found {len(files)} file(s) of type {sat} to process")
+    print(f"Found {len(files)} fileset(s) of type {sat} to process")
+    
+    viirs_id = DEVICE_ID_MAP['viirs']
+    
     for file_list in files:
         print(f"Processing {file_list[0].name}")
+        file_date = file_list.pop(-1)
         
         for loc in LOCATIONS:
             t1 = time.time()
@@ -226,10 +262,23 @@ def main():
             volc_name = volc['name']
     
             datastream_mapping = get_datastream_mapping(volc_name)
+            if not datastream_mapping:
+                print(f"WARNING: No datastreams found for {volc_name}")
+                continue
+            
+            start_times = get_start(datastream_mapping)
+            start_time = start_times[viirs_id]
+            if file_date < start_time:
+                print(f"File older than most recent results for {volc_name}. Skipping.")
+                continue
+            
             try:
-                results, meta = hotlink_local.get_results(loc, elev, file_list, sat)
+                results, meta = hotlink_local.get_results(start_time, loc, elev, file_list, sat)
             except hotlink_local.CoverageError as e:
                 print(f"Insufficient coverage for volcano {volc_name}, {sat}. {e}")
+                continue
+            except hotlink_local.AgeError as e:
+                print("File older than most recent results for this location. Skipping.")
                 continue
     
             if not results.empty and meta['Result Count'] > 0:

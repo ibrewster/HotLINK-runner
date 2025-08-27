@@ -1,15 +1,13 @@
-import functools
 import hashlib
-import math
 import pathlib
+import re
 import shutil
 import time
 import warnings
 
-from collections import defaultdict
 from collections.abc import Sequence
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from datetime import datetime, UTC
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, UTC
 
 import hotlink
 import numpy
@@ -31,6 +29,9 @@ class CoverageError(Exception):
     """Custom exception for coverage-related issues."""
     pass
 
+class AgeError(Exception):
+    pass
+
 def _gen_output_name(dest, files):
     img_date = datetime.strptime(extract_datetime(files[0]), '%Y%m%dT%H%M%S')
     out_file =  dest / img_date.strftime('%Y%m%d_%H%M.npy')
@@ -49,6 +50,31 @@ def get_match_key(granule, substitute_prefix=False):
     # Keep everything up to the version, drop processing time and extension
     match_key = "_".join(parts[1:5])  # e.g., j01_d20250528_t1418572_e1420217
     return match_key
+
+# Regex to capture date, start time, end time from the standard JPSS/VIIRS names
+
+_VIIRS_TS_RE = re.compile(
+    r'_d(?P<date>\d{8})'
+    r'_t(?P<start>\d{6})(?P<start_frac>\d{1,3})?'
+    r'_e(?P<end>\d{6})(?P<end_frac>\d{1,3})?'
+)
+
+
+def viirs_start_end_from_name(p: pathlib.Path) -> tuple[datetime | None, datetime | None]:
+    """Parse start and end times from a VIIRS filename. Returns UTC datetimes, or (None, None) if not found."""
+    m = _VIIRS_TS_RE.search(p.name)
+    if not m:
+        return None, None
+    d = m.group('date')
+    t = m.group('start')
+    e = m.group('end')
+    start = datetime.strptime(d + t, '%Y%m%d%H%M%S').replace(tzinfo=UTC)
+    end = datetime.strptime(d + e, '%Y%m%d%H%M%S').replace(tzinfo=UTC)
+    # handle midnight crossover (rare but possible)
+    if end < start:
+        end = end + timedelta(days=1)
+    return start, end
+
 
 def match_viirs(mir_files: list | tuple, tir_files: list | tuple, geog_files: list | tuple) -> pandas.DataFrame:
     """
@@ -86,8 +112,11 @@ def match_viirs(mir_files: list | tuple, tir_files: list | tuple, geog_files: li
     df_merged = pandas.merge(df, df2, how="inner", on="match_key", suffixes=("_1", "_2"))
     df_merged = pandas.merge(df_merged, df_geog, how="inner", on="match_key")
     df_merged.rename(columns={"file": "file_3"}, inplace=True)
-
-    return df_merged[['file_1', 'file_2', 'file_3']]
+    
+    df_merged["start_time"], df_merged["end_time"] = zip(*df_merged["file_3"].map(viirs_start_end_from_name))
+    df_merged = df_merged.sort_values(['start_time'], kind="stable")
+    
+    return df_merged[['file_1', 'file_2', 'file_3', 'start_time']]
 
 def extract_datetime(filename: pathlib.PosixPath) -> str:
     parts = filename.name.split("_")
@@ -107,6 +136,7 @@ def _make_cache_key(datasets: Sequence[str], in_files: Sequence[pathlib.Path]) -
 
 
 def load_and_resample(
+    start_time: datetime, 
     datasets: Sequence[str],
     reader: str,
     area: geometry.AreaDefinition,
@@ -157,6 +187,10 @@ def load_and_resample(
         _cached_scn.clear()
         _cached_scn[cache_key] = scn
 
+    
+    if scn.start_time.replace(tzinfo=UTC) < start_time:
+        raise AgeError
+
     cropscn = scn.resample(destination=area, datasets=datasets)
   
     mir = cropscn[datasets[0]].to_numpy()
@@ -177,6 +211,7 @@ def load_and_resample(
 
 
 def preprocess(
+    start_time, 
     vent,
     results,
     sat, 
@@ -201,14 +236,14 @@ def preprocess(
 
     out_file =  _gen_output_name(dest, input_files)
     try:
-        load_and_resample(datasets, reader, area, input_files, out_file)
+        load_and_resample(start_time, datasets, reader, area, input_files, out_file)
         meta = {
             out_file.name: {
                 'satelite': input_files[0].name.split('_')[1],
                 'sensor': sat,
             }
         }
-    except CoverageError:
+    except (CoverageError, AgeError):
         raise
     
     except Exception as e:
@@ -220,6 +255,7 @@ def preprocess(
     return meta
 
 def get_results(
+    start_time: datetime, 
     vent: str | tuple[float, float],
     elevation: int,
     files: list[pathlib.PosixPath],
@@ -331,6 +367,7 @@ def get_results(
 
     print("Processing files...")         
     download_meta = preprocess(
+        start_time, 
         vent,
         files,
         sensor, 
