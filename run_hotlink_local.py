@@ -268,6 +268,7 @@ def main():
         print(f"Found a start time of {start_time} for volcano {volc_name}")
         
         futures = []
+        future_files = {}
         with ThreadPoolExecutor() as executor:
             for idx, file_list in enumerate(files):
                 file_date = file_list.pop(-1)
@@ -285,9 +286,11 @@ def main():
                     file_list,
                     sat
                 )
-                futures.append((file_list[0], future))
+                future_files[future] = file_list[0]
+                futures.append(future)
                 
-            for idx, (filename, future) in enumerate(as_completed(futures)):
+            for idx,future in enumerate(as_completed(futures)):
+                filename = future_files.get(future)
                 try:
                     results, meta = future.result()
                 except hotlink_local.CoverageError as e:
