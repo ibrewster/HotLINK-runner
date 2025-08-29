@@ -282,7 +282,7 @@ def main():
         future_files = {}
         with ThreadPoolExecutor() as executor:
             for idx, file_list in enumerate(files):
-                file_date = file_list.pop(-1)
+                file_date = file_list[-1]
                 print(f"Processing {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
     
                 if file_date <= start_time:
@@ -294,7 +294,7 @@ def main():
                     start_time,
                     loc,
                     elev,
-                    file_list,
+                    file_list[:-1],
                     sat
                 )
                 future_files[future] = file_list[0]
@@ -302,6 +302,7 @@ def main():
                 
             for idx,future in enumerate(as_completed(futures)):
                 filename = future_files.get(future)
+                print(f"Processing results for file {filename} ({idx}/{len(futures)})")
                 try:
                     results, meta = future.result()
                 except hotlink_local.CoverageError as e:
