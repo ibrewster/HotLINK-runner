@@ -8,6 +8,7 @@ import warnings
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, UTC
+from functools import lru_cache
 
 import hotlink
 import numpy
@@ -125,16 +126,6 @@ def extract_datetime(filename: pathlib.PosixPath) -> str:
     
     return f"{date_part}T{time_part}"
 
-# Cache the scene object, so we don't have to re-load the same file(s) multiple times
-_cached_scn = {}
-
-def _make_cache_key(datasets: Sequence[str], in_files: Sequence[pathlib.Path]) -> str:
-    """Create a simple hash key from datasets and file paths."""
-    # Sort to ensure consistent ordering
-    key_str = "|".join(sorted(str(f.resolve()) for f in in_files)) + "::" + "|".join(sorted(datasets))
-    return hashlib.sha256(key_str.encode("utf-8")).hexdigest()
-
-
 def load_and_resample(
     start_time: datetime, 
     datasets: Sequence[str],
@@ -176,17 +167,9 @@ def load_and_resample(
     # Loading the scene results in warnings about an ineficient chunking operations
     # Since this is SatPy, and we can't do anything about it, just ignore the warnings.
     warnings.simplefilter("ignore", UserWarning)
-
-    cache_key = _make_cache_key(datasets, in_files)
-
-    if cache_key in _cached_scn:
-        scn = _cached_scn[cache_key]
-    else:    
-        scn=Scene(reader=reader,filenames=[str(f.absolute()) for f in in_files])
-        scn.load(datasets,calibration='radiance')
-        _cached_scn.clear()
-        _cached_scn[cache_key] = scn
-
+   
+    scn=Scene(reader=reader,filenames=[str(f.absolute()) for f in in_files])
+    scn.load(datasets,calibration='radiance')
     
     if scn.start_time.replace(tzinfo=UTC) < start_time:
         raise AgeError
@@ -208,6 +191,7 @@ def load_and_resample(
 
     data = numpy.dstack((mir, tir))
     numpy.save(out_file, data)
+    scn.unload()
 
 
 def preprocess(
@@ -253,6 +237,10 @@ def preprocess(
     print("Resampling complete in", time.time() - t1, "seconds")
 
     return meta
+
+@lru_cache(maxsize=1)
+def cached_load_volcs():
+    return support_functions.load_volcanoes()
 
 def get_results(
     start_time: datetime, 
@@ -335,7 +323,7 @@ def get_results(
         'Run Start': datetime.now(UTC).isoformat(),
     }
 
-    volcs = support_functions.load_volcanoes()
+    volcs = cached_load_volcs()
 
     if isinstance(vent, str):
         volc = volcs[volcs['name']==vent]
