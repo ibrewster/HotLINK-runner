@@ -3,6 +3,7 @@ import pathlib
 import time
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from functools import lru_cache
 
@@ -266,33 +267,44 @@ def main():
         start_time = start_times[viirs_id]
         print(f"Found a start time of {start_time} for volcano {volc_name}")
         
-        for idx, file_list in enumerate(files):
-            t1 = time.time()
-            file_date = file_list.pop(-1)
-            print(f"Processing {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
-
-            if file_date <= start_time:
-                print(f"File older than most recent results for {volc_name}. Skipping.")
-                continue
-            
-            try:
-                results, meta = hotlink_local.get_results(start_time, loc, elev, file_list, sat)
-            except hotlink_local.CoverageError as e:
-                print(f"Insufficient coverage for volcano {volc_name}, {sat}. {e}")
-                continue
-            except hotlink_local.AgeError as e:
-                print("File older than most recent results for this location. Skipping.")
-                continue
+        futures = []
+        with ThreadPoolExecutor() as executor:
+            for idx, file_list in enumerate(files):
+                file_date = file_list.pop(-1)
+                print(f"Processing {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
     
-            if not results.empty and meta['Result Count'] > 0:
-                pass
-                # save_results(results, datastream_mapping)
-            else:
-                print(f"No results to save for {volc_name} {sat}")
-    
-            print(f"Ran HotLINK for {loc} in {time.time() - t1} seconds")
+                if file_date <= start_time:
+                    print(f"File older than most recent results for {volc_name}. Skipping.")
+                    continue
+                
+                future = executor.submit(
+                    hotlink_local.get_results,
+                    start_time,
+                    loc,
+                    elev,
+                    file_list,
+                    sat
+                )
+                futures.append((file_list[0], future))
+                
+            for idx, (filename, future) in enumerate(as_completed(futures)):
+                try:
+                    results, meta = future.result()
+                except hotlink_local.CoverageError as e:
+                    print(f"File {filename} has insufficient coverage for volcano {volc_name}, {sat}. {e}")
+                    continue
+                except hotlink_local.AgeError as e:
+                    print("File older than most recent results for this location. Skipping.")
+                    continue
+        
+                if not results.empty and meta['Result Count'] > 0:
+                    save_results(results, datastream_mapping)
+                else:
+                    print(f"No results to save for file {filename}, {volc_name} {sat}")
+        
+                print(f"Ran HotLINK for {loc}, {filename} ({idx}/{len(futures)})")
             
-        print(f"All volcs processed for file {file_list[0].name}")
+        print(f"All files processed for volc {volc_name}")
             
     print("All files processed.")
 
