@@ -263,12 +263,13 @@ def main():
             continue
         
         start_times = get_start(datastream_mapping)
-        start_time = start_times[viirs_id]        
+        start_time = start_times[viirs_id]
+        print(f"Found a start time of {start_time} for volcano {volc_name}")
         
         for idx, file_list in enumerate(files):
             t1 = time.time()
             file_date = file_list.pop(-1)
-            print(f"Processing {file_list[0].name} ({idx}/{len(files)}")
+            print(f"Processing {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
 
             if file_date <= start_time:
                 print(f"File older than most recent results for {volc_name}. Skipping.")
