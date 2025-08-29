@@ -90,6 +90,7 @@ def load_volcs():
 
     return data
 
+@lru_cache(None)
 def get_datastream_mapping(location):
     query = """
         SELECT
@@ -118,6 +119,7 @@ def get_datastream_mapping(location):
     return mapping
 
 
+@lru_cache(None)
 def get_volc(vent):
     VOLCS = load_volcs()
     if isinstance(vent, str):
@@ -249,25 +251,25 @@ def main():
     
     viirs_id = DEVICE_ID_MAP['viirs']
     
-    for file_list in files:
-        print(f"Processing {file_list[0].name}")
-        file_date = file_list.pop(-1)
+    for loc in LOCATIONS:
+        # Make sure we are using the canonical volcano.
+        volc = get_volc(loc)
+        elev = volc['elev']
+        volc_name = volc['name']
+
+        datastream_mapping = get_datastream_mapping(volc_name)
+        if not datastream_mapping:
+            print(f"WARNING: No datastreams found for {volc_name}")
+            continue
         
-        for loc in LOCATIONS:
+        start_times = get_start(datastream_mapping)
+        start_time = start_times[viirs_id]        
+        
+        for idx, file_list in enumerate(files):
             t1 = time.time()
-    
-            # Make sure we are using the canonical volcano.
-            volc = get_volc(loc)
-            elev = volc['elev']
-            volc_name = volc['name']
-    
-            datastream_mapping = get_datastream_mapping(volc_name)
-            if not datastream_mapping:
-                print(f"WARNING: No datastreams found for {volc_name}")
-                continue
-            
-            start_times = get_start(datastream_mapping)
-            start_time = start_times[viirs_id]
+            file_date = file_list.pop(-1)
+            print(f"Processing {file_list[0].name} ({idx}/{len(files)}")
+
             if file_date <= start_time:
                 print(f"File older than most recent results for {volc_name}. Skipping.")
                 continue
