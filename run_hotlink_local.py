@@ -289,9 +289,7 @@ def main():
     
             print(f"Ran HotLINK for {loc} in {time.time() - t1} seconds")
             
-        print(f"All volcs processed for file {file_list[0].name} Removing source files")
-        for file in file_list:
-            file.unlink()
+        print(f"All volcs processed for file {file_list[0].name}")
             
     print("All files processed.")
 
