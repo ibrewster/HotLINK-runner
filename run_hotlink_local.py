@@ -1,6 +1,5 @@
 import json
 import pathlib
-import time
 
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,6 +8,7 @@ from functools import lru_cache
 
 import pandas
 import psycopg
+import redis
 
 from hotlink import support_functions
 
@@ -256,12 +256,17 @@ def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
     results = df.to_numpy().tolist()
     return sat, results
     
+def file_key(file):
+    filename = pathlib.Path(file).name
+    return "_".join(filename.split('_')[1:6])
+
 def main():
     print("Beginning processing")
     sat, files = load_file_list()
     print(f"Found {len(files)} fileset(s) of type {sat} to process")
     
     viirs_id = DEVICE_ID_MAP['viirs']
+    db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
     
     for loc in LOCATIONS:
         # Make sure we are using the canonical volcano.
@@ -282,8 +287,14 @@ def main():
         future_files = {}
         with ThreadPoolExecutor() as executor:
             for idx, file_list in enumerate(files):
+                fkey = file_key(file_list[0])
+                if db.exists(f"{volc_name}:{fkey}"):
+                    continue
+                else:
+                    db.setex(f"{volc_name}:{fkey}", 129600, "1")
+                
                 file_date = file_list[-1]
-                print(f"Processing {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
+                print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
     
                 if file_date <= start_time:
                     print(f"File older than most recent results for {volc_name}. Skipping.")
@@ -323,6 +334,7 @@ def main():
         print(f"All files processed for volc {volc_name}")
             
     print("All files processed.")
+    db.close()
 
 if __name__ == "__main__":
     main()
