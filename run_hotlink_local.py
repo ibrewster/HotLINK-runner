@@ -268,7 +268,7 @@ def main():
             
             start_times = get_start(datastream_mapping)
             start_time = start_times[viirs_id]
-            if file_date < start_time:
+            if file_date <= start_time:
                 print(f"File older than most recent results for {volc_name}. Skipping.")
                 continue
             
