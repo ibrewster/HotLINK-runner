@@ -15,7 +15,7 @@ import config
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Spurr']
+LOCATIONS = ['Spurr', 'Great Sitkin']
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
