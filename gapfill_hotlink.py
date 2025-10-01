@@ -1,23 +1,21 @@
 import json
-import pathlib
+import time
 
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
+from datetime import timedelta, datetime, timezone
 from functools import lru_cache
 
+import hotlink
 import pandas
 import psycopg
-import redis
 
 from hotlink import support_functions
 
 import config
-import hotlink_local
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Shishaldin','Great Sitkin', 'Redoubt', 'Spurr', 'Veniaminof', 'Semisopochnoi']
+LOCATIONS = ['Shishaldin']
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
@@ -91,7 +89,6 @@ def load_volcs():
 
     return data
 
-@lru_cache(None)
 def get_datastream_mapping(location):
     query = """
         SELECT
@@ -120,7 +117,6 @@ def get_datastream_mapping(location):
     return mapping
 
 
-@lru_cache(None)
 def get_volc(vent):
     VOLCS = load_volcs()
     if isinstance(vent, str):
@@ -133,7 +129,8 @@ def get_volc(vent):
 
     return volc.iloc[0]
 
-def get_start(datastreams):
+
+def get_newest(datastreams, end_date):
     # Group datastream_ids by sensor
     viirs = DEVICE_ID_MAP['viirs']
     modis = DEVICE_ID_MAP['modis']
@@ -142,7 +139,7 @@ def get_start(datastreams):
         if sensor in sensor_ids:
             sensor_ids[sensor].append(datastream_id)
 
-    latest_timestamps = {}
+    newest_timestamps = {}
 
     # Timestamps in the database are based on the filename, which is in
     # turn based on pass start. Searches, on the other hand, are based on
@@ -151,20 +148,21 @@ def get_start(datastreams):
     QUERY = """
     SELECT COALESCE(
         MAX(timestamp)+'15 minute'::interval,
-        now() - '7 days'::interval
-    ) as latest_timestamp
+        now()
+    ) as newest_timestamp
     FROM datavalues
     WHERE datastream_id = ANY(%s)
-    AND timestamp >= now() - '7 days'::interval
+    AND timestamp < %s
 """
     with preevents_cursor() as cursor:
         for sensor, ids in sensor_ids.items():
             if ids: # Should always be true
-                cursor.execute(QUERY, (ids,))
+                cursor.execute(QUERY, (ids,end_date))
                 result = cursor.fetchone()
-                latest_timestamps[sensor] = result[0]
+                newest_timestamps[sensor] = result[0]
 
-    return latest_timestamps
+    return newest_timestamps
+
 
 def save_results(results, mapping):
     # Save results to PREEVENTS database
@@ -221,120 +219,41 @@ def save_results(results, mapping):
         cursor.connection.commit()
 
 
-def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
-    # Get a list of files
-    input_path = pathlib.Path(config.DATA_PATH)
-    df = None
-    sat = None
-    
-    if not input_path.exists():
-        return sat, [] # No input directory, no input files
-    
-    file_types = defaultdict(list)
-    files = list(input_path.rglob('*.h5'))
-    for file in files:
-        ftype = file.name.split('_')[0]
-        file_types[ftype].append(file)
-        
-    viirs_keys = {'SVI04', 'SVI05', 'GITCO'}
-    if viirs_keys.issubset(file_types):
-        sat = 'viirs'
-        df = hotlink_local.match_viirs(
-            file_types['SVI04'],
-            file_types['SVI05'],
-            file_types['GITCO']
-        )
-  
-    # unexpected = set(file_types) - viirs_keys
-    # if unexpected:
-        # print(f"Warning: Found unexpected file types: {unexpected}")
-        
-    if df is None or df.empty:
-        return sat, []
-    
-    # Extract the final list of files
-    results = df.to_numpy().tolist()
-    return sat, results
-    
-def file_key(file):
-    filename = pathlib.Path(file).name
-    return "_".join(filename.split('_')[1:6])
-
 def main():
-    print("Beginning processing")
-    sat, files = load_file_list()
-    print(f"Found {len(files)} fileset(s) of type {sat} to process")
-    
-    viirs_id = DEVICE_ID_MAP['viirs']
-    db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-    
     for loc in LOCATIONS:
+        t1 = time.time()
+
         # Make sure we are using the canonical volcano.
         volc = get_volc(loc)
         elev = volc['elev']
         volc_name = volc['name']
 
+        print("Getting datastreams for", volc_name)
         datastream_mapping = get_datastream_mapping(volc_name)
-        if not datastream_mapping:
-            print(f"WARNING: No datastreams found for {volc_name}")
-            continue
+        print("Getting oldest records")
+        last_end_time = datetime(2025, 9, 24, tzinfo=timezone.utc)
+        start_times = get_newest(datastream_mapping, last_end_time)
         
-        start_times = get_start(datastream_mapping)
-        start_time = start_times[viirs_id]
-        print(f"Found a start time of {start_time} for volcano {volc_name}")
-        
-        futures = []
-        future_files = {}
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            for idx, file_list in enumerate(files):
-                fkey = file_key(file_list[0])
-                if db.exists(f"{volc_name}:{fkey}"):
-                    continue
-                else:
-                    db.setex(f"{volc_name}:{fkey}", 129600, "1")
+        for sensor in ['viirs', 'modis']:
+            sensor_id=DEVICE_ID_MAP[sensor]
+            if start_times[sensor_id] > last_end_time:
+                continue # All processed
+            start_time = start_times[sensor_id].strftime('%Y-%m-%dT%H:%M:00')
+            end_time = start_times[sensor_id] + timedelta(days=30)
+            if end_time > last_end_time:
+                end_time = last_end_time
                 
-                file_date = file_list[-1]
-                print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
-    
-                if file_date <= start_time:
-                    print(f"File older than most recent results for {volc_name}. Skipping.")
-                    continue
-                
-                future = executor.submit(
-                    hotlink_local.get_results,
-                    start_time,
-                    loc,
-                    elev,
-                    file_list[:-1],
-                    sat
-                )
-                future_files[future] = file_list[0]
-                futures.append(future)
-                
-            for idx,future in enumerate(as_completed(futures)):
-                filename = future_files.get(future)
-                print(f"Processing results for file {filename} ({idx}/{len(futures)})")
-                try:
-                    results, meta = future.result()
-                except hotlink_local.CoverageError as e:
-                    print(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} ({filename})")
-                    continue
-                except hotlink_local.AgeError as e:
-                    print("File older than most recent results for this location. Skipping.")
-                    continue
-        
-                if not results.empty and meta['Result Count'] > 0:
-                    save_results(results, datastream_mapping)
-                    print(f"Saved results for {volc_name} - {filename}")
-                else:
-                    print(f"No results to save for file {filename}, {volc_name} {sat}")
-        
-                print(f"Ran HotLINK for {loc}, {filename} ({idx}/{len(futures)})")
-            
-        print(f"All files processed for volc {volc_name}")
-            
-    print("All files processed.")
-    db.close()
+            end_time = end_time.strftime('%Y-%m-%dT%H:%M:00')
+            dates = (start_time, end_time)
+            print(f"****Running {volc_name} {sensor} for {dates}")
+            results, meta = hotlink.get_results(loc, elev, dates, sensor)
+
+            if meta['Result Count'] > 0:
+                save_results(results, datastream_mapping)
+            else:
+                print(f"No results to save for {volc_name} {sensor} in {dates}")
+
+        print(f"Ran HotLINK for {loc} in {time.time() - t1} seconds")
 
 if __name__ == "__main__":
     main()
