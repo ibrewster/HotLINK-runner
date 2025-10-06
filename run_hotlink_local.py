@@ -291,15 +291,13 @@ def main():
                 fkey = file_key(file_list[0])
                 if db.exists(f"{volc_name}:{fkey}"):
                     continue
-                else:
-                    db.setex(f"{volc_name}:{fkey}", 129600, "1")
 
                 file_date = file_list[-1]
-                print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
-
                 if file_date <= start_time:
                     print(f"File older than most recent results for {volc_name}. Skipping.")
                     continue
+
+                print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
 
                 future = executor.submit(
                     hotlink_local.get_results,
@@ -309,11 +307,11 @@ def main():
                     file_list[:-1],
                     sat
                 )
-                future_files[future] = file_list[0]
+                future_files[future] = (file_list[0], fkey)
                 futures.append(future)
 
             for idx,future in enumerate(as_completed(futures)):
-                filename = future_files.get(future)
+                filename, fkey = future_files.get(future)
                 print(f"Processing results for file {filename} ({idx}/{len(futures)})")
                 try:
                     results, meta = future.result()
@@ -326,6 +324,9 @@ def main():
                 except Exception as e:
                     print(f"Unable to process results for {volc_name}, {sat} ({filename})\n{e}")
                     continue
+                finally:
+                    # Mark this file as having been attempted, so we don't try it again
+                    db.setex(f"{volc_name}:{fkey}", 129600, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
                     save_results(results, datastream_mapping)
