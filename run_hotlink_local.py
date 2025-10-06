@@ -307,7 +307,7 @@ def main():
                 fkey = f"{volc_name}:{file_list[-1]}"
                 file_date = file_list[-2]
 
-                print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(to_process)})")
+                print(f"Submitting {file_list[0].name} with time {file_date} ({idx + 1}/{len(to_process)})")
 
                 future = executor.submit(
                     hotlink_local.get_results,
@@ -322,7 +322,7 @@ def main():
 
             for idx,future in enumerate(as_completed(futures)):
                 filename, fkey = future_files.get(future)
-                print(f"Processing results for file {filename} ({idx}/{len(futures)})")
+                print(f"Processing results for file {filename} ({idx + 1}/{len(futures)})")
                 try:
                     try:
                         results, meta = future.result()
