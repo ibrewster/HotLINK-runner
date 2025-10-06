@@ -283,6 +283,8 @@ def main():
         start_time = start_times[viirs_id]
         print(f"Found a start time of {start_time} for volcano {volc_name}")
 
+
+
         futures = []
         future_files = {}
         saved_records = 0
@@ -314,19 +316,23 @@ def main():
                 filename, fkey = future_files.get(future)
                 print(f"Processing results for file {filename} ({idx}/{len(futures)})")
                 try:
-                    results, meta = future.result()
-                except hotlink_local.CoverageError as e:
-                    print(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} ({filename})")
-                    continue
-                except hotlink_local.AgeError as e:
-                    print("File older than most recent results for this location. Skipping.")
-                    continue
+                    try:
+                        results, meta = future.result()
+                    except hotlink_local.CoverageError as e:
+                        print(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} ({filename})")
+                        continue
+                    except hotlink_local.AgeError as e:
+                        print("File older than most recent results for this location. Skipping.")
+                        continue
+                    finally:
+                        # Mark this file as having been attempted, so we don't try it again
+                        exc_type, _, _ = sys.exc_info()
+                        if exc_type is None:
+                            db.setex(f"{volc_name}:{fkey}", 129600, "1")
                 except Exception as e:
-                    print(f"Unable to process results for {volc_name}, {sat} ({filename})\n{e}")
+                    # Log the exception, but don't mark this file as processed.
+                    print(f"Unknown exception while processing file: {e}")
                     continue
-                finally:
-                    # Mark this file as having been attempted, so we don't try it again
-                    db.setex(f"{volc_name}:{fkey}", 129600, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
                     save_results(results, datastream_mapping)

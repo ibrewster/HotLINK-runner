@@ -234,7 +234,7 @@ def preprocess(
 
     except Exception as e:
         print(f"Unable to process file(s) {input_files} Exception occured:\n{e}")
-        return {}
+        raise
 
     print("Resampling complete in", time.time() - t1, "seconds")
 
