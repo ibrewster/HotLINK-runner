@@ -226,16 +226,16 @@ def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
     input_path = pathlib.Path(config.DATA_PATH)
     df = None
     sat = None
-    
+
     if not input_path.exists():
         return sat, [] # No input directory, no input files
-    
+
     file_types = defaultdict(list)
     files = list(input_path.rglob('*.h5'))
     for file in files:
         ftype = file.name.split('_')[0]
         file_types[ftype].append(file)
-        
+
     viirs_keys = {'SVI04', 'SVI05', 'GITCO'}
     if viirs_keys.issubset(file_types):
         sat = 'viirs'
@@ -244,18 +244,18 @@ def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
             file_types['SVI05'],
             file_types['GITCO']
         )
-  
+
     # unexpected = set(file_types) - viirs_keys
     # if unexpected:
         # print(f"Warning: Found unexpected file types: {unexpected}")
-        
+
     if df is None or df.empty:
         return sat, []
-    
+
     # Extract the final list of files
     results = df.to_numpy().tolist()
     return sat, results
-    
+
 def file_key(file):
     filename = pathlib.Path(file).name
     return "_".join(filename.split('_')[1:6])
@@ -264,10 +264,10 @@ def main():
     print("Beginning processing")
     sat, files = load_file_list()
     print(f"Found {len(files)} fileset(s) of type {sat} to process")
-    
+
     viirs_id = DEVICE_ID_MAP['viirs']
     db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-    
+
     for loc in LOCATIONS:
         # Make sure we are using the canonical volcano.
         volc = get_volc(loc)
@@ -278,11 +278,11 @@ def main():
         if not datastream_mapping:
             print(f"WARNING: No datastreams found for {volc_name}")
             continue
-        
+
         start_times = get_start(datastream_mapping)
         start_time = start_times[viirs_id]
         print(f"Found a start time of {start_time} for volcano {volc_name}")
-        
+
         futures = []
         future_files = {}
         with ThreadPoolExecutor(max_workers=5) as executor:
@@ -292,14 +292,14 @@ def main():
                     continue
                 else:
                     db.setex(f"{volc_name}:{fkey}", 129600, "1")
-                
+
                 file_date = file_list[-1]
                 print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
-    
+
                 if file_date <= start_time:
                     print(f"File older than most recent results for {volc_name}. Skipping.")
                     continue
-                
+
                 future = executor.submit(
                     hotlink_local.get_results,
                     start_time,
@@ -310,7 +310,7 @@ def main():
                 )
                 future_files[future] = file_list[0]
                 futures.append(future)
-                
+
             for idx,future in enumerate(as_completed(futures)):
                 filename = future_files.get(future)
                 print(f"Processing results for file {filename} ({idx}/{len(futures)})")
@@ -322,17 +322,20 @@ def main():
                 except hotlink_local.AgeError as e:
                     print("File older than most recent results for this location. Skipping.")
                     continue
-        
+                except Exception as e:
+                    print(f"Unable to process results for {volc_name}, {sat} ({filename})\n{e}")
+                    continue
+
                 if not results.empty and meta['Result Count'] > 0:
                     save_results(results, datastream_mapping)
                     print(f"Saved results for {volc_name} - {filename}")
                 else:
                     print(f"No results to save for file {filename}, {volc_name} {sat}")
-        
+
                 print(f"Ran HotLINK for {loc}, {filename} ({idx}/{len(futures)})")
-            
+
         print(f"All files processed for volc {volc_name}")
-            
+
     print("All files processed.")
     db.close()
 

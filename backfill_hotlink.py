@@ -15,7 +15,7 @@ import config
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Spurr']
+LOCATIONS = ['Semisopochnoi']
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
@@ -157,7 +157,8 @@ def get_oldest(datastreams):
     with preevents_cursor() as cursor:
         for sensor, ids in sensor_ids.items():
             if ids: # Should always be true
-                cursor.execute(QUERY, (ids,))
+                search_ids = [x for x in ids if x != 220]
+                cursor.execute(QUERY, (search_ids,))
                 result = cursor.fetchone()
                 oldest_timestamps[sensor] = result[0]
 
@@ -232,6 +233,7 @@ def main():
         datastream_mapping = get_datastream_mapping(volc_name)
         print("Getting oldest records")
         end_times = get_oldest(datastream_mapping)
+        print(f"Oldest detected streams: {end_times}")
 
         for sensor in ['viirs', 'modis']:
             sensor_id=DEVICE_ID_MAP[sensor]
