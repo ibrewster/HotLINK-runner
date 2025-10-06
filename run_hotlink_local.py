@@ -1,5 +1,6 @@
 import json
 import pathlib
+import sys
 
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -306,7 +307,7 @@ def main():
                 fkey = f"{volc_name}:{file_list[-1]}"
                 file_date = file_list[-2]
 
-                print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
+                print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(to_process)})")
 
                 future = executor.submit(
                     hotlink_local.get_results,
