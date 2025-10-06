@@ -230,19 +230,21 @@ def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
     if not input_path.exists():
         return sat, [] # No input directory, no input files
 
-    file_types = defaultdict(list)
-    files = list(input_path.rglob('*.h5'))
-    for file in files:
-        ftype = file.name.split('_')[0]
-        file_types[ftype].append(file)
+    files = pandas.DataFrame(
+        [
+            (f, f.name.split('_')[0], file_key(f))
+            for f in input_path.rglob('*.h5')
+        ],
+        columns = ['path', 'type', 'key']
+    )
 
     viirs_keys = {'SVI04', 'SVI05', 'GITCO'}
-    if viirs_keys.issubset(file_types):
+    if viirs_keys.issubset(files['type'].tolist()):
         sat = 'viirs'
         df = hotlink_local.match_viirs(
-            file_types['SVI04'],
-            file_types['SVI05'],
-            file_types['GITCO']
+            files[files['type']=='SVI04']['path'],
+            files[files['type']=='SVI05']['path'],
+            files[files['type']=='GITCO']['path']
         )
 
     # unexpected = set(file_types) - viirs_keys
@@ -252,9 +254,11 @@ def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
     if df is None or df.empty:
         return sat, []
 
+    df['key'] = df.merge(files[['path', 'key']], left_on='file_1', right_on='path', how='left')['key']
+
     # Extract the final list of files
-    results = df.to_numpy().tolist()
-    return sat, results
+    # results = df.to_numpy().tolist()
+    return sat, df
 
 def file_key(file):
     filename = pathlib.Path(file).name
@@ -282,22 +286,24 @@ def main():
         start_times = get_start(datastream_mapping)
         start_time = start_times[viirs_id]
         print(f"Found a start time of {start_time} for volcano {volc_name}")
+        redis_keys = set(db.keys(f"{volc_name}:*"))
+        is_processed = (f"{volc_name}:" + files['key']).isin(redis_keys)
+        is_new = files['start_time'] > start_time
+        volc_files = files[is_new & ~is_processed]
 
 
+        if volc_files.empty:
+            print(f"No new, unprocessed files to process for {volc_name}")
+            print("---------------------")
+            continue
 
         futures = []
         future_files = {}
         saved_records = 0
+        to_process = volc_files.to_numpy().tolist()
         with ThreadPoolExecutor(max_workers=5) as executor:
-            for idx, file_list in enumerate(files):
-                fkey = file_key(file_list[0])
-                if db.exists(f"{volc_name}:{fkey}"):
-                    continue
-
-                file_date = file_list[-1]
-                if file_date <= start_time:
-                    print(f"File older than most recent results for {volc_name}. Skipping.")
-                    continue
+            for idx, file_list in enumerate(to_process):
+                fkey = f"{volc_name}:{file_list[-1]}"
 
                 print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
 
@@ -306,7 +312,7 @@ def main():
                     start_time,
                     loc,
                     elev,
-                    file_list[:-1],
+                    file_list[:-2],
                     sat
                 )
                 future_files[future] = (file_list[0], fkey)
@@ -328,7 +334,7 @@ def main():
                         # Mark this file as having been attempted, so we don't try it again
                         exc_type, _, _ = sys.exc_info()
                         if exc_type is None:
-                            db.setex(f"{volc_name}:{fkey}", 129600, "1")
+                            db.setex(fkey, 129600, "1")
                 except Exception as e:
                     # Log the exception, but don't mark this file as processed.
                     print(f"Unknown exception while processing file: {e}")
