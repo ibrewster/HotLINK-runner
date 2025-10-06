@@ -285,6 +285,7 @@ def main():
 
         futures = []
         future_files = {}
+        saved_records = 0
         with ThreadPoolExecutor(max_workers=5) as executor:
             for idx, file_list in enumerate(files):
                 fkey = file_key(file_list[0])
@@ -328,13 +329,15 @@ def main():
 
                 if not results.empty and meta['Result Count'] > 0:
                     save_results(results, datastream_mapping)
+                    saved_records += 1
                     print(f"Saved results for {volc_name} - {filename}")
                 else:
                     print(f"No results to save for file {filename}, {volc_name} {sat}")
 
                 print(f"Ran HotLINK for {loc}, {filename} ({idx}/{len(futures)})")
 
-        print(f"All files processed for volc {volc_name}")
+        print(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(futures)} files) since {start_time}")
+        print("----------------------------------")
 
     print("All files processed.")
     db.close()

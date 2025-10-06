@@ -45,7 +45,7 @@ def get_match_key(granule, substitute_prefix=False):
     """
 
     url = str(granule)
-        
+
     filename = url.split("/")[-1]  # Extract filename from URL
     parts = filename.split("_")
     # Keep everything up to the version, drop processing time and extension
@@ -86,48 +86,48 @@ def match_viirs(mir_files: list | tuple, tir_files: list | tuple, geog_files: li
         "file": g,
          "match_key": get_match_key(g, substitute_prefix=True)
     } for g in mir_files]
-    
+
     df = pandas.DataFrame(mir_data)
     if len(df) == 0:
         return df
-    
+
     tir_data = [{
         "file": g,
         "match_key": get_match_key(g, substitute_prefix=False)
     } for g in tir_files]
-      
-    
+
+
     df2 = pandas.DataFrame(tir_data)
     if len(df2) == 0:
         return df2
-    
+
     geog_data = [{
         "file": g,
         "match_key": get_match_key(g, substitute_prefix=False)
     } for g in geog_files]
-    
+
     df_geog = pandas.DataFrame(geog_data)
     if df_geog.empty:
-        return df_geog    
-    
+        return df_geog
+
     df_merged = pandas.merge(df, df2, how="inner", on="match_key", suffixes=("_1", "_2"))
     df_merged = pandas.merge(df_merged, df_geog, how="inner", on="match_key")
     df_merged.rename(columns={"file": "file_3"}, inplace=True)
-    
+
     df_merged["start_time"], df_merged["end_time"] = zip(*df_merged["file_3"].map(viirs_start_end_from_name))
     df_merged = df_merged.sort_values(['start_time'], kind="stable")
-    
+
     return df_merged[['file_1', 'file_2', 'file_3', 'start_time']]
 
 def extract_datetime(filename: pathlib.PosixPath) -> str:
     parts = filename.name.split("_")
     date_part = parts[2][1:]  # remove 'd'
     time_part = parts[3][1:7]  # remove 't' and truncate to 6 digits
-    
+
     return f"{date_part}T{time_part}"
 
 def load_and_resample(
-    start_time: datetime, 
+    start_time: datetime,
     datasets: Sequence[str],
     reader: str,
     area: geometry.AreaDefinition,
@@ -167,38 +167,40 @@ def load_and_resample(
     # Loading the scene results in warnings about an ineficient chunking operations
     # Since this is SatPy, and we can't do anything about it, just ignore the warnings.
     warnings.simplefilter("ignore", UserWarning)
-   
+
     scn=Scene(reader=reader,filenames=[str(f.absolute()) for f in in_files])
     scn.load(datasets,calibration='radiance')
-    
-    if scn.start_time.replace(tzinfo=UTC) < start_time:
-        raise AgeError
 
-    cropscn = scn.resample(destination=area, datasets=datasets)
-  
-    mir = cropscn[datasets[0]].to_numpy()
-    tir = cropscn[datasets[1]].to_numpy()
-    
-    total_pixels = mir.size
-    valid_pixels = (~numpy.isnan(mir)).sum()
-    coverage = (valid_pixels / total_pixels) * 100
-    if coverage < .8:
-        raise CoverageError(f"Coverage: {coverage}")
+    try:
+        if scn.start_time.replace(tzinfo=UTC) < start_time:
+            raise AgeError
 
-    # Fill missing values
-    mir[numpy.isnan(mir)] = numpy.nanmin(mir)
-    tir[numpy.isnan(tir)] = numpy.nanmin(tir)
+        cropscn = scn.resample(destination=area, datasets=datasets)
 
-    data = numpy.dstack((mir, tir))
-    numpy.save(out_file, data)
-    scn.unload()
+        mir = cropscn[datasets[0]].to_numpy()
+        tir = cropscn[datasets[1]].to_numpy()
+
+        total_pixels = mir.size
+        valid_pixels = (~numpy.isnan(mir)).sum()
+        coverage = (valid_pixels / total_pixels) * 100
+        if coverage < .8:
+            raise CoverageError(f"Coverage: {coverage}")
+
+        # Fill missing values
+        mir[numpy.isnan(mir)] = numpy.nanmin(mir)
+        tir[numpy.isnan(tir)] = numpy.nanmin(tir)
+
+        data = numpy.dstack((mir, tir))
+        numpy.save(out_file, data)
+    finally:
+        scn.unload()
 
 
 def preprocess(
-    start_time, 
+    start_time,
     vent,
     results,
-    sat, 
+    sat,
     folder='./data',
     output=pathlib.Path('./Output')
 ):
@@ -212,7 +214,7 @@ def preprocess(
     else:
         reader = 'modis_l1b'
         datasets = ['21', '32']
-        
+
     input_files = tuple(results)
 
     t1 = time.time()
@@ -229,7 +231,7 @@ def preprocess(
         }
     except (CoverageError, AgeError):
         raise
-    
+
     except Exception as e:
         print(f"Unable to process file(s) {input_files} Exception occured:\n{e}")
         return {}
@@ -243,11 +245,11 @@ def cached_load_volcs():
     return support_functions.load_volcanoes()
 
 def get_results(
-    start_time: datetime, 
+    start_time: datetime,
     vent: str | tuple[float, float],
     elevation: int,
     files: list[pathlib.PosixPath],
-    sensor: str, 
+    sensor: str,
     out_dir: str | pathlib.Path | None = None
 ) -> (pandas.DataFrame, dict):
 
@@ -314,7 +316,7 @@ def get_results(
     ... )
     >>> print(results)
     """
-    sensor = 'VIIRS'    
+    sensor = 'VIIRS'
 
     meta = {
         'Vent': vent,
@@ -353,12 +355,12 @@ def get_results(
     # make sure the data directory exists
     data_path.mkdir(exist_ok = True)
 
-    print("Processing files...")         
+    print("Processing files...")
     download_meta = preprocess(
-        start_time, 
+        start_time,
         vent,
         files,
-        sensor, 
+        sensor,
         folder = data_path,
         output=output_dir
     )
@@ -391,7 +393,7 @@ def get_results(
     # crs = f"+proj=utm +zone={utm_zone}{hemisphere} +datum=WGS84 +units=m +no_defs"
     meta['UTM Zone'] = utm_zone
     meta['UTM Latitude Band'] = utm_lat_band
-    
+
     data_files = list(data_path.glob('*.npy'))
 
     if not data_files:
