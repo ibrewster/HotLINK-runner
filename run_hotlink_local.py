@@ -304,6 +304,7 @@ def main():
         with ThreadPoolExecutor(max_workers=5) as executor:
             for idx, file_list in enumerate(to_process):
                 fkey = f"{volc_name}:{file_list[-1]}"
+                file_date = file_list[-2]
 
                 print(f"Submitting {file_list[0].name} with time {file_date} ({idx}/{len(files)})")
 
