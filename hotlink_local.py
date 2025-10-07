@@ -1,3 +1,4 @@
+import gc
 import hashlib
 import pathlib
 import re
@@ -193,8 +194,14 @@ def load_and_resample(
         data = numpy.dstack((mir, tir))
         numpy.save(out_file, data)
     finally:
+        # Probably overkill cleanup, but I've had issues with "too many open files"
+        # in this code, so I'm not taking any chances here.
+        if 'cropscn' in locals():
+            cropscn.unload()
+            del mir, tir, cropscn
         scn.unload()
-
+        del scn
+        gc.collect()
 
 def preprocess(
     start_time,
