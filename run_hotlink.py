@@ -122,7 +122,7 @@ def get_volc(vent):
     if isinstance(vent, str):
         volc = VOLCS[VOLCS['name'].str.lower()==vent.lower()]
         if len(volc) == 0:
-            raise ValueError("Specified volcano not found!")
+            raise ValueError(f"Specified volcano ({vent}) not found!")
     else:
         dists = support_functions.haversine_np(vent[1], vent[0], VOLCS['lon'], VOLCS['lat'])
         volc = VOLCS[dists==dists.min()]
