@@ -18,7 +18,21 @@ import hotlink_local
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Shishaldin','Great Sitkin', 'Redoubt', 'Spurr', 'Veniaminof', 'Semisopochnoi']
+LOCATIONS = [
+    'Makushin',
+    'Gareloi',
+    'Okmok',
+    'Bogoslof',
+    'Augustine', 
+    'Pavlof',
+    'Cleveland',
+    'Shishaldin',
+    'Great Sitkin',
+    'Redoubt',
+    'Spurr',
+    'Veniaminof',
+    'Semisopochnoi'
+]
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
