@@ -268,7 +268,7 @@ def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
         # print(f"Warning: Found unexpected file types: {unexpected}")
 
     if df is None or df.empty:
-        return sat, []
+        return sat, pandas.DataFrame()
 
     df['key'] = df.merge(files[['path', 'key']], left_on='file_1', right_on='path', how='left')['key']
 
