@@ -19,7 +19,7 @@ import hotlink_local
 
 ########## CONSTANTS #########
 LOCATIONS = [
-    'Korovin', 
+    'Korovin',
     'Makushin',
     'Gareloi',
     'Okmok',
