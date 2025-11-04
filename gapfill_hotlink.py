@@ -15,7 +15,7 @@ import config
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Redoubt']
+LOCATIONS = ['Okmok']
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
@@ -231,7 +231,7 @@ def main():
         print("Getting datastreams for", volc_name)
         datastream_mapping = get_datastream_mapping(volc_name)
         print("Getting oldest records")
-        last_end_time = datetime(2025, 8, 27, tzinfo=timezone.utc)
+        last_end_time = datetime(2025, 10, 7, 22, tzinfo=timezone.utc)
         start_times = get_newest(datastream_mapping, last_end_time)
         
         for sensor in ['viirs', 'modis']:
