@@ -3,7 +3,7 @@ import pathlib
 import sys
 
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 from contextlib import contextmanager
 from functools import lru_cache
 
@@ -28,7 +28,7 @@ LOCATIONS = [
     'Westdahl',
     'Akutan',
     'Kasatochi',
-#    'Korovin',
+    'Atka volcanic complex',
     'Makushin',
     'Gareloi',
     'Okmok',
@@ -326,7 +326,7 @@ def main():
         future_files = {}
         saved_records = 0
         to_process = volc_files.to_numpy().tolist()
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ProcessPoolExecutor(max_workers=4, max_tasks_per_child=15) as executor:
             for idx, file_list in enumerate(to_process):
                 fkey = f"{volc_name}:{file_list[-1]}"
                 file_date = file_list[-2]
