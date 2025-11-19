@@ -324,59 +324,65 @@ def main():
             print("---------------------")
             continue
 
-        futures = []
-        future_files = {}
+
         saved_records = 0
-        to_process = volc_files.to_numpy().tolist()
-        mp_context = multiprocessing.get_context('spawn')
-        with ProcessPoolExecutor(max_workers=4, max_tasks_per_child=15, mp_context=mp_context) as executor:
-            for idx, file_list in enumerate(to_process):
-                fkey = f"{volc_name}:{file_list[-1]}"
-                file_date = file_list[-2]
-
-                print(f"Submitting {file_list[0].name} with time {file_date} ({idx + 1}/{len(to_process)})")
-
-                future = executor.submit(
-                    hotlink_local.get_results,
-                    start_time,
-                    loc,
-                    elev,
-                    file_list[:-2],
-                    sat
-                )
-                future_files[future] = (file_list[0], fkey)
-                futures.append(future)
-
-            for idx,future in enumerate(as_completed(futures)):
-                filename, fkey = future_files.get(future)
-                print(f"Processing results for file {filename} ({idx + 1}/{len(futures)})")
-                try:
+        
+        BATCH_SIZE = 100
+        to_process_all = volc_files.to_numpy().tolist()
+        chunks = [to_process_all[i:i + BATCH_SIZE] for i in range(0, len(to_process_all), BATCH_SIZE)]
+        for batch_idx, to_process in enumerate(chunks):
+            print(f"--- Starting Batch {batch_idx + 1}/{len(chunks)} ---")        
+            with ProcessPoolExecutor(max_workers=4) as executor:
+                futures = []
+                future_files = {}
+                
+                for idx, file_list in enumerate(to_process):
+                    fkey = f"{volc_name}:{file_list[-1]}"
+                    file_date = file_list[-2]
+    
+                    print(f"Submitting {file_list[0].name} with time {file_date} ({idx + 1}/{len(to_process)})")
+    
+                    future = executor.submit(
+                        hotlink_local.get_results,
+                        start_time,
+                        loc,
+                        elev,
+                        file_list[:-2],
+                        sat
+                    )
+                    future_files[future] = (file_list[0], fkey)
+                    futures.append(future)
+    
+                for idx,future in enumerate(as_completed(futures)):
+                    filename, fkey = future_files.get(future)
+                    print(f"Processing results for file {filename} ({idx + 1}/{len(futures)})")
                     try:
-                        results, meta = future.result()
-                    except hotlink_local.CoverageError as e:
-                        print(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} ({filename})")
+                        try:
+                            results, meta = future.result()
+                        except hotlink_local.CoverageError as e:
+                            print(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} ({filename})")
+                            continue
+                        except hotlink_local.AgeError as e:
+                            print("File older than most recent results for this location. Skipping.")
+                            continue
+                        finally:
+                            # Mark this file as having been attempted, so we don't try it again
+                            exc_type, _, _ = sys.exc_info()
+                            if exc_type is None:
+                                db.setex(fkey, 129600, "1")
+                    except Exception as e:
+                        # Log the exception, but don't mark this file as processed.
+                        print(f"Unknown exception while processing file: {e}")
                         continue
-                    except hotlink_local.AgeError as e:
-                        print("File older than most recent results for this location. Skipping.")
-                        continue
-                    finally:
-                        # Mark this file as having been attempted, so we don't try it again
-                        exc_type, _, _ = sys.exc_info()
-                        if exc_type is None:
-                            db.setex(fkey, 129600, "1")
-                except Exception as e:
-                    # Log the exception, but don't mark this file as processed.
-                    print(f"Unknown exception while processing file: {e}")
-                    continue
-
-                if not results.empty and meta['Result Count'] > 0:
-                    save_results(results, datastream_mapping)
-                    saved_records += 1
-                    print(f"Saved results for {volc_name} - {filename}")
-                else:
-                    print(f"No results to save for file {filename}, {volc_name} {sat}")
-
-                print(f"Ran HotLINK for {loc}, {filename} ({idx}/{len(futures)})")
+    
+                    if not results.empty and meta['Result Count'] > 0:
+                        save_results(results, datastream_mapping)
+                        saved_records += 1
+                        print(f"Saved results for {volc_name} - {filename}")
+                    else:
+                        print(f"No results to save for file {filename}, {volc_name} {sat}")
+    
+                    print(f"Ran HotLINK for {loc}, {filename} ({idx}/{len(futures)})")
 
         print(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(futures)} files) since {start_time}")
         print("----------------------------------")
