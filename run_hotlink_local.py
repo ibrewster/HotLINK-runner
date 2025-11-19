@@ -332,7 +332,7 @@ def main():
         chunks = [to_process_all[i:i + BATCH_SIZE] for i in range(0, len(to_process_all), BATCH_SIZE)]
         for batch_idx, to_process in enumerate(chunks):
             print(f"--- Starting Batch {batch_idx + 1}/{len(chunks)} ---")        
-            with ProcessPoolExecutor(max_workers=4) as executor:
+            with ThreadPoolExecutor(max_workers=4) as executor:
                 futures = []
                 future_files = {}
                 
