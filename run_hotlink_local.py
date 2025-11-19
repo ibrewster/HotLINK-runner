@@ -327,7 +327,7 @@ def main():
 
         saved_records = 0
         
-        BATCH_SIZE = 100
+        BATCH_SIZE = 60
         to_process_all = volc_files.to_numpy().tolist()
         chunks = [to_process_all[i:i + BATCH_SIZE] for i in range(0, len(to_process_all), BATCH_SIZE)]
         for batch_idx, to_process in enumerate(chunks):
