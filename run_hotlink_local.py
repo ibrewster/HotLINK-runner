@@ -1,10 +1,9 @@
 import json
-import multiprocessing
+import logging
 import pathlib
 import sys
 
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from functools import lru_cache
 
@@ -30,7 +29,6 @@ LOCATIONS = [
     'Westdahl',
     'Akutan',
     'Kasatochi',
-#    'Atka volcanic complex',
     'Makushin',
     'Gareloi',
     'Okmok',
@@ -244,7 +242,7 @@ def save_results(results, mapping):
                             (datastream_id, timestamp, datavalue)
                         )
                     else:
-                        print(f"Warning: No datastream_id for {result_key} with sensor {sensor}")
+                        logging.warning(f"Warning: No datastream_id for {result_key} with sensor {sensor}")
         cursor.connection.commit()
 
 
@@ -276,7 +274,7 @@ def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
 
     # unexpected = set(file_types) - viirs_keys
     # if unexpected:
-        # print(f"Warning: Found unexpected file types: {unexpected}")
+        # logging.warning(f"Warning: Found unexpected file types: {unexpected}")
 
     if df is None or df.empty:
         return sat, pandas.DataFrame()
@@ -292,9 +290,15 @@ def file_key(file):
     return "_".join(filename.split('_')[1:6])
 
 def main():
-    print("Beginning processing")
+    logging.basicConfig(
+        level=logging.INFO,    # Set the minimum level to capture (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        format='%(asctime)s - %(levelname)s - %(message)s',  # Define the structure
+        datefmt='%Y-%m-%d %H:%M:%S'  # Optional: simplies the timestamp format
+    )
+    
+    logging.info("Beginning processing")
     sat, files = load_file_list()
-    print(f"Found {len(files)} fileset(s) of type {sat} to process")
+    logging.info(f"Found {len(files)} fileset(s) of type {sat} to process")
 
     viirs_id = DEVICE_ID_MAP['viirs']
     db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
@@ -307,12 +311,12 @@ def main():
 
         datastream_mapping = get_datastream_mapping(volc_name)
         if not datastream_mapping:
-            print(f"WARNING: No datastreams found for {volc_name}")
+            logging.warning(f"WARNING: No datastreams found for {volc_name}")
             continue
 
         start_times = get_start(datastream_mapping)
         start_time = start_times[viirs_id]
-        print(f"Found a start time of {start_time} for volcano {volc_name}")
+        logging.info(f"Found a start time of {start_time} for volcano {volc_name}")
         redis_keys = set(db.keys(f"{volc_name}:*"))
         is_processed = (f"{volc_name}:" + files['key']).isin(redis_keys)
         is_new = files['start_time'] > start_time
@@ -320,18 +324,21 @@ def main():
 
 
         if volc_files.empty:
-            print(f"No new, unprocessed files to process for {volc_name}")
-            print("---------------------")
+            logging.info(f"No new, unprocessed files to process for {volc_name}")
+            logging.info("---------------------")
             continue
 
 
         saved_records = 0
         process_idx = 0
+        
+        # Process in batches, refreshing the ThreadPoolExecutor between each, 
+        # to avoid "too many open files" issue.
         BATCH_SIZE = 60
         to_process_all = volc_files.to_numpy().tolist()
         chunks = [to_process_all[i:i + BATCH_SIZE] for i in range(0, len(to_process_all), BATCH_SIZE)]
         for batch_idx, to_process in enumerate(chunks):
-            print(f"--- Starting Batch {batch_idx + 1}/{len(chunks)} ---")        
+            logging.info(f"--- Starting Batch {batch_idx + 1}/{len(chunks)} ---")        
             with ThreadPoolExecutor(max_workers=4) as executor:
                 futures = []
                 future_files = {}
@@ -340,7 +347,7 @@ def main():
                     fkey = f"{volc_name}:{file_list[-1]}"
                     file_date = file_list[-2]
     
-                    # print(f"Submitting {file_list[0].name} with time {file_date} ({idx + 1}/{len(to_process)})")
+                    logging.debug(f"Submitting {file_list[0].name} with time {file_date} ({idx + 1}/{len(to_process)})")
     
                     future = executor.submit(
                         hotlink_local.get_results,
@@ -353,19 +360,19 @@ def main():
                     future_files[future] = (file_list[0], fkey)
                     futures.append(future)
     
-                print(f"Submitted {len(to_process)} jobs for processing.")
+                logging.info(f"Submitted {len(to_process)} jobs for processing.")
                 for future in as_completed(futures):
                     process_idx += 1
                     filename, fkey = future_files.get(future)
-                    print(f"Processing results for file {filename} ({process_idx}/{len(to_process_all)})")
+                    logging.info(f"Processing results for file {filename} ({process_idx}/{len(to_process_all)})")
                     try:
                         try:
                             results, meta = future.result()
                         except hotlink_local.CoverageError as e:
-                            print(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} ({filename})")
+                            logging.info(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} ({filename})")
                             continue
                         except hotlink_local.AgeError as e:
-                            print("File older than most recent results for this location. Skipping.")
+                            logging.info("File older than most recent results for this location. Skipping.")
                             continue
                         finally:
                             # Mark this file as having been attempted, so we don't try it again
@@ -374,22 +381,22 @@ def main():
                                 db.setex(fkey, 129600, "1")
                     except Exception as e:
                         # Log the exception, but don't mark this file as processed.
-                        print(f"Unknown exception while processing file: {e}")
+                        logging.error(f"Unknown exception while processing file: {e}")
                         continue
     
                     if not results.empty and meta['Result Count'] > 0:
                         save_results(results, datastream_mapping)
                         saved_records += 1
-                        print(f"Saved results for {volc_name} - {filename}")
+                        logging.info(f"Saved results for {volc_name} - {filename}")
                     else:
-                        print(f"No results to save for file {filename}, {volc_name} {sat}")
+                        logging.info(f"No results to save for file {filename}, {volc_name} {sat}")
     
-                    print(f"Ran HotLINK for {loc}, {filename} ({process_idx}/{len(to_process_all)})")
+                    logging.info(f"Ran HotLINK for {loc}, {filename} ({process_idx}/{len(to_process_all)})")
 
-        print(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(to_process_all)} files) since {start_time}")
-        print("----------------------------------")
+        logging.info(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(to_process_all)} files) since {start_time}")
+        logging.info("----------------------------------")
 
-    print("All files processed.")
+    logging.info("All files processed.")
     db.close()
 
 if __name__ == "__main__":

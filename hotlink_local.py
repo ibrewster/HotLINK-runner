@@ -1,4 +1,5 @@
 import gc
+import logging
 import pathlib
 import re
 import shutil
@@ -223,7 +224,7 @@ def preprocess(
     input_files = tuple(results)
 
     t1 = time.time()
-    print("Beginning resampling")
+    logging.info("Beginning resampling")
 
     out_file =  _gen_output_name(dest, input_files)
     try:
@@ -238,10 +239,10 @@ def preprocess(
         raise
 
     except Exception as e:
-        print(f"Unable to process file(s) {input_files} Exception occured:\n{e}")
+        logging.error(f"Unable to process file(s) {input_files} Exception occured:\n{e}")
         raise
 
-    print("Resampling complete in", time.time() - t1, "seconds")
+    logging.info("Resampling complete in", time.time() - t1, "seconds")
 
     return meta
 
@@ -308,7 +309,7 @@ def get_results(
     ...     sensor="viirs",
     ...     out_dir="Output Images"
     ... )
-    >>> print(results)
+    >>> logging.info(results)
 
     >>> results = get_results(
     ...     vent=(54.7554, -163.9711),
@@ -316,7 +317,7 @@ def get_results(
     ...     dates=("2019-01-01", "2019-12-31"),
     ...     sensor="viirs"
     ... )
-    >>> print(results)
+    >>> logging.info(results)
     """
     # local import to avoid circular imports
     from run_hotlink_local import load_volcs
@@ -341,7 +342,7 @@ def get_results(
         volcs.loc[:, 'dist'] = dists
         volc = volcs[volcs['dist']==volcs['dist'].min()]
 
-    print("Using volcano:", volc.iloc[0]['name'], "location:", vent)
+    logging.info(f"Using volcano: {volc.iloc[0]['name']} location: {vent}")
 
     meta['Volcano Name'] = volc.iloc[0]['name']
     meta['Volcano ID'] = volc.iloc[0]['id']
@@ -359,7 +360,7 @@ def get_results(
     # make sure the data directory exists
     data_path.mkdir(exist_ok = True)
 
-    print("Processing files...")
+    logging.info("Processing files...")
     download_meta = preprocess(
         start_time,
         vent,
@@ -369,7 +370,7 @@ def get_results(
         output=output_dir
     )
 
-    print("Image files processed. Beginning calculations")
+    logging.info("Image files processed. Beginning calculations")
 
     # Set some constants based on sensor
     if sensor.upper() == 'MODIS':
@@ -401,7 +402,7 @@ def get_results(
     data_files = list(data_path.glob('*.npy'))
 
     if not data_files:
-        print("WARNING: No data files to process.")
+        logging.warning("No data files to process.")
         # Define the expected columns for an empty DataFrame
         expected_columns = [
             'Data File', 'Number Hotspot Pixels', 'Hotspot Radiative Power (W)',
@@ -454,7 +455,7 @@ def get_results(
     predict_data = support_functions.crop_center(n_data, crop_dimensions=(1, 2))
     predict_data = predict_data.reshape(n_data.shape[0], 64, 64, 2)
 
-    print("Predicting hotspots...")
+    logging.info("Predicting hotspots...")
     prediction = MODEL.predict(predict_data) #shape=[batch_size, 24, 24, 3], for 3 predicted classes:background, hotspot-adjacent, and hotspot
 
     # use hysteresis thresholding to generate a binary map of hotspot pixels
