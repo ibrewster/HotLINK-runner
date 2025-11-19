@@ -19,6 +19,7 @@ import hotlink_local
 
 ########## CONSTANTS #########
 LOCATIONS = [
+    'Korovin',
     'Martin',
     'Amukta',
     'Chiginagak',
@@ -28,7 +29,7 @@ LOCATIONS = [
     'Westdahl',
     'Akutan',
     'Kasatochi',
-    'Atka volcanic complex',
+#    'Atka volcanic complex',
     'Makushin',
     'Gareloi',
     'Okmok',
