@@ -1,4 +1,5 @@
 import json
+import multiprocessing
 import pathlib
 import sys
 
@@ -327,7 +328,8 @@ def main():
         future_files = {}
         saved_records = 0
         to_process = volc_files.to_numpy().tolist()
-        with ProcessPoolExecutor(max_workers=4, max_tasks_per_child=15) as executor:
+        mp_context = multiprocessing.get_context('spawn')
+        with ProcessPoolExecutor(max_workers=4, max_tasks_per_child=15, mp_context=mp_context) as executor:
             for idx, file_list in enumerate(to_process):
                 fkey = f"{volc_name}:{file_list[-1]}"
                 file_date = file_list[-2]

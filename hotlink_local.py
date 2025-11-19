@@ -8,7 +8,6 @@ import warnings
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, UTC
-from functools import lru_cache
 
 import hotlink
 import numpy
