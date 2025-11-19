@@ -326,7 +326,7 @@ def main():
 
 
         saved_records = 0
-        
+        process_idx = 0
         BATCH_SIZE = 60
         to_process_all = volc_files.to_numpy().tolist()
         chunks = [to_process_all[i:i + BATCH_SIZE] for i in range(0, len(to_process_all), BATCH_SIZE)]
@@ -340,7 +340,7 @@ def main():
                     fkey = f"{volc_name}:{file_list[-1]}"
                     file_date = file_list[-2]
     
-                    print(f"Submitting {file_list[0].name} with time {file_date} ({idx + 1}/{len(to_process)})")
+                    # print(f"Submitting {file_list[0].name} with time {file_date} ({idx + 1}/{len(to_process)})")
     
                     future = executor.submit(
                         hotlink_local.get_results,
@@ -353,9 +353,11 @@ def main():
                     future_files[future] = (file_list[0], fkey)
                     futures.append(future)
     
-                for idx,future in enumerate(as_completed(futures)):
+                print(f"Submitted {len(to_process)} jobs for processing.")
+                for future in as_completed(futures):
+                    process_idx += 1
                     filename, fkey = future_files.get(future)
-                    print(f"Processing results for file {filename} ({idx + 1}/{len(futures)})")
+                    print(f"Processing results for file {filename} ({process_idx}/{len(to_process_all)})")
                     try:
                         try:
                             results, meta = future.result()
@@ -382,9 +384,9 @@ def main():
                     else:
                         print(f"No results to save for file {filename}, {volc_name} {sat}")
     
-                    print(f"Ran HotLINK for {loc}, {filename} ({idx}/{len(futures)})")
+                    print(f"Ran HotLINK for {loc}, {filename} ({process_idx}/{len(to_process_all)})")
 
-        print(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(futures)} files) since {start_time}")
+        print(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(to_process_all)} files) since {start_time}")
         print("----------------------------------")
 
     print("All files processed.")
