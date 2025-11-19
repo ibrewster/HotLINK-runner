@@ -1,5 +1,4 @@
 import gc
-import hashlib
 import pathlib
 import re
 import shutil
@@ -247,9 +246,6 @@ def preprocess(
 
     return meta
 
-@lru_cache(maxsize=1)
-def cached_load_volcs():
-    return support_functions.load_volcanoes()
 
 def get_results(
     start_time: datetime,
@@ -323,6 +319,8 @@ def get_results(
     ... )
     >>> print(results)
     """
+    # local import to avoid circular imports
+    from run_hotlink_local import load_volcs
     sensor = 'VIIRS'
 
     meta = {
@@ -332,7 +330,7 @@ def get_results(
         'Run Start': datetime.now(UTC).isoformat(),
     }
 
-    volcs = cached_load_volcs()
+    volcs = load_volcs()
 
     if isinstance(vent, str):
         volc = volcs[volcs['name']==vent]
