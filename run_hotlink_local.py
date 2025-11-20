@@ -1,5 +1,11 @@
-import json
 import logging
+logging.basicConfig(
+    level=logging.INFO,    # Set the minimum level to capture (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    format='%(asctime)s - %(levelname)s - %(message)s',  # Define the structure
+    datefmt='%Y-%m-%d %H:%M:%S'  # Optional: simplies the timestamp format
+)
+
+import json
 import pathlib
 import sys
 
@@ -290,12 +296,6 @@ def file_key(file):
     return "_".join(filename.split('_')[1:6])
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,    # Set the minimum level to capture (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        format='%(asctime)s - %(levelname)s - %(message)s',  # Define the structure
-        datefmt='%Y-%m-%d %H:%M:%S'  # Optional: simplies the timestamp format
-    )
-    
     logging.info("Beginning processing")
     sat, files = load_file_list()
     logging.info(f"Found {len(files)} fileset(s) of type {sat} to process")
