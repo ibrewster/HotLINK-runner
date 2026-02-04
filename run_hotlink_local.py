@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg')
+
 import logging
 logging.basicConfig(
     level=logging.INFO,    # Set the minimum level to capture (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -12,15 +15,19 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from functools import lru_cache
+from io import BytesIO
+from os.path import splitext
 
 import pandas
 import psycopg
 import redis
 
 from hotlink import support_functions
+import matplotlib.pyplot as plt
 
 import config
 import hotlink_local
+import mattermost
 
 
 ########## CONSTANTS #########
@@ -197,6 +204,30 @@ def get_start(datastreams):
 
     return latest_timestamps
 
+def save_mir_image(img, title):
+    fig = plt.figure(figsize=(4, 4))
+    plt.imshow(img)
+    plt.colorbar()
+    plt.title(title)
+    
+    out = BytesIO()
+    fig.savefig(out, format="png")
+    
+    out.seek(0)
+    plt.close()
+    return out
+
+def post_mattermost(img, volcano_id, filename, meta):
+    VOLCS = load_volcs()
+    volcano = VOLCS.loc[VOLCS['id'] == volcano_id, 'name'].iloc[0]
+    
+    message = f"""### {volcano} HotLINK Detection.
+**Image Date:** {meta['Date'].strftime('%m/%d/%Y')}
+**Max Probability:** {round(meta['Max Probability'] * 100)}%"""
+    
+    matt, channel = mattermost.connect()
+    mattermost.mm_upload(matt, channel, message, image=img, img_name=filename)
+    
 def save_results(results, mapping):
     # Save results to PREEVENTS database
     results['Day/Night Flag'] = results['Day/Night Flag'].apply(lambda x: json.dumps({"day_night": x}))
@@ -205,7 +236,16 @@ def save_results(results, mapping):
             sensor = row["Sensor"].lower() # Pull from results for good measure
             sensor = DEVICE_ID_MAP[sensor]
             timestamp = row["Date"]
-
+            
+            # Save the MIR Image
+            mir_data = row['MIRImage']
+            mir_filename = f"{splitext(row['Data File'])[0]}_mir.png"
+            mir_title = f"Middle Infrared\n{timestamp.strftime('%Y-%m-%d %H:%M')}"
+            img_bytes = save_mir_image(mir_data, mir_title)
+            
+            if row['Max Probability'] >= 0.75 and json.loads(row['Day/Night Flag'])['day_night'] == 'N':
+                post_mattermost(img_bytes, row['Volcano ID'], mir_filename, row)
+            
             # Save the metadata record
             metadata = {"satellite": row["Satellite"], "sensor": row["Sensor"]}
             metadata_json = json.dumps(metadata)
@@ -222,6 +262,7 @@ def save_results(results, mapping):
                     """,
                     (metadata_datastream, timestamp, metadata_json)
                 )
+                
             # Save the value records
             for result_key in VARIABLE_ID_MAP.keys():
                 if result_key in row and not pandas.isna(row[result_key]):
@@ -321,7 +362,6 @@ def main():
         is_processed = (f"{volc_name}:" + files['key']).isin(redis_keys)
         is_new = files['start_time'] > start_time
         volc_files = files[is_new & ~is_processed]
-
 
         if volc_files.empty:
             logging.info(f"No new, unprocessed files to process for {volc_name}")
