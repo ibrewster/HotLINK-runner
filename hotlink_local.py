@@ -242,7 +242,7 @@ def preprocess(
         logging.error(f"Unable to process file(s) {input_files} Exception occured:\n{e}")
         raise
 
-    logging.info("Resampling complete in", time.time() - t1, "seconds")
+    logging.info(f"Resampling complete in {time.time() - t1} seconds")
 
     return meta
 
@@ -537,6 +537,7 @@ def get_results(
     # pull in metadata retrieved during the download
     file_meta = results['Data File'].map(lambda x: download_meta.get(x, {}))
     results['Satellite'] = file_meta.map(lambda x: x.get('satelite'))
+    results['MIRImage'] = list(mir_data)
 
     SAVE_IMAGES = False # TODO: make this a user passable flag somewhere.
 
