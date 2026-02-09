@@ -46,7 +46,7 @@ LOCATIONS = [
     'Gareloi',
     'Okmok',
     'Bogoslof',
-    'Augustine', 
+    'Augustine',
     'Pavlof',
     'Cleveland',
     'Shishaldin',
@@ -209,10 +209,10 @@ def save_mir_image(img, title):
     plt.imshow(img)
     plt.colorbar()
     plt.title(title)
-    
+
     out = BytesIO()
     fig.savefig(out, format="png")
-    
+
     out.seek(0)
     plt.close()
     return out
@@ -220,14 +220,14 @@ def save_mir_image(img, title):
 def post_mattermost(img, volcano_id, filename, meta):
     VOLCS = load_volcs()
     volcano = VOLCS.loc[VOLCS['id'] == volcano_id, 'name'].iloc[0]
-    
+
     message = f"""### {volcano} HotLINK Detection.
 **Image Date:** {meta['Date'].strftime('%m/%d/%Y')}
 **Max Probability:** {round(meta['Max Probability'] * 100)}%"""
-    
+
     matt, channel = mattermost.connect()
     mattermost.mm_upload(matt, channel, message, image=img, img_name=filename)
-    
+
 def save_results(results, mapping):
     # Save results to PREEVENTS database
     results['Day/Night Flag'] = results['Day/Night Flag'].apply(lambda x: json.dumps({"day_night": x}))
@@ -236,16 +236,16 @@ def save_results(results, mapping):
             sensor = row["Sensor"].lower() # Pull from results for good measure
             sensor = DEVICE_ID_MAP[sensor]
             timestamp = row["Date"]
-            
+
             # Save the MIR Image
             mir_data = row['MIRImage']
             mir_filename = f"{splitext(row['Data File'])[0]}_mir.png"
             mir_title = f"Middle Infrared\n{timestamp.strftime('%Y-%m-%d %H:%M')}"
             img_bytes = save_mir_image(mir_data, mir_title)
-            
-            if row['Max Probability'] >= 0.75 and json.loads(row['Day/Night Flag'])['day_night'] == 'N':
+
+            if row['Max Probability'] >= 0.5 and json.loads(row['Day/Night Flag'])['day_night'] == 'N':
                 post_mattermost(img_bytes, row['Volcano ID'], mir_filename, row)
-            
+
             # Save the metadata record
             metadata = {"satellite": row["Satellite"], "sensor": row["Sensor"]}
             metadata_json = json.dumps(metadata)
@@ -262,7 +262,7 @@ def save_results(results, mapping):
                     """,
                     (metadata_datastream, timestamp, metadata_json)
                 )
-                
+
             # Save the value records
             for result_key in VARIABLE_ID_MAP.keys():
                 if result_key in row and not pandas.isna(row[result_key]):
@@ -371,24 +371,24 @@ def main():
 
         saved_records = 0
         process_idx = 0
-        
-        # Process in batches, refreshing the ThreadPoolExecutor between each, 
+
+        # Process in batches, refreshing the ThreadPoolExecutor between each,
         # to avoid "too many open files" issue.
         BATCH_SIZE = 60
         to_process_all = volc_files.to_numpy().tolist()
         chunks = [to_process_all[i:i + BATCH_SIZE] for i in range(0, len(to_process_all), BATCH_SIZE)]
         for batch_idx, to_process in enumerate(chunks):
-            logging.info(f"--- Starting Batch {batch_idx + 1}/{len(chunks)} ---")        
+            logging.info(f"--- Starting Batch {batch_idx + 1}/{len(chunks)} ---")
             with ThreadPoolExecutor(max_workers=4) as executor:
                 futures = []
                 future_files = {}
-                
+
                 for idx, file_list in enumerate(to_process):
                     fkey = f"{volc_name}:{file_list[-1]}"
                     file_date = file_list[-2]
-    
+
                     logging.debug(f"Submitting {file_list[0].name} with time {file_date} ({idx + 1}/{len(to_process)})")
-    
+
                     future = executor.submit(
                         hotlink_local.get_results,
                         start_time,
@@ -399,7 +399,7 @@ def main():
                     )
                     future_files[future] = (file_list[0], fkey)
                     futures.append(future)
-    
+
                 logging.info(f"Submitted {len(to_process)} jobs for processing.")
                 for future in as_completed(futures):
                     process_idx += 1
@@ -423,14 +423,14 @@ def main():
                         # Log the exception, but don't mark this file as processed.
                         logging.error(f"Unknown exception while processing file: {e}")
                         continue
-    
+
                     if not results.empty and meta['Result Count'] > 0:
                         save_results(results, datastream_mapping)
                         saved_records += 1
                         logging.info(f"Saved results for {volc_name} - {filename}")
                     else:
                         logging.info(f"No results to save for file {filename}, {volc_name} {sat}")
-    
+
                     logging.info(f"Ran HotLINK for {loc}, {filename} ({process_idx}/{len(to_process_all)})")
 
         logging.info(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(to_process_all)} files) since {start_time}")

@@ -15,7 +15,7 @@ import config
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Okmok']
+LOCATIONS = ['Bogoslof']
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
@@ -233,7 +233,8 @@ def main():
         print("Getting oldest records")
         last_end_time = datetime(2025, 10, 7, 22, tzinfo=timezone.utc)
         start_times = get_newest(datastream_mapping, last_end_time)
-        
+
+        no_data = 1
         for sensor in ['viirs', 'modis']:
             sensor_id=DEVICE_ID_MAP[sensor]
             if start_times[sensor_id] > last_end_time:
@@ -242,18 +243,21 @@ def main():
             end_time = start_times[sensor_id] + timedelta(days=30)
             if end_time > last_end_time:
                 end_time = last_end_time
-                
+
             end_time = end_time.strftime('%Y-%m-%dT%H:%M:00')
             dates = (start_time, end_time)
             print(f"****Running {volc_name} {sensor} for {dates}")
             results, meta = hotlink.get_results(loc, elev, dates, sensor)
 
             if meta['Result Count'] > 0:
+                no_data = 0
                 save_results(results, datastream_mapping)
             else:
                 print(f"No results to save for {volc_name} {sensor} in {dates}")
 
         print(f"Ran HotLINK for {loc} in {time.time() - t1} seconds")
+        return no_data
 
 if __name__ == "__main__":
-    main()
+    no_data = main()
+    exit(no_data)

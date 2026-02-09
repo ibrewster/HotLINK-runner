@@ -15,7 +15,7 @@ import config
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Semisopochnoi']
+LOCATIONS = ['Makushin', 'Kasatochi']
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
@@ -88,6 +88,9 @@ def load_volcs():
         data = pandas.DataFrame(cursor.fetchall(), columns=columns)
 
     return data
+
+# Use our volcano loader in hotlink
+hotlink.support_functions.load_volcanoes=load_volcs
 
 def get_datastream_mapping(location):
     query = """
@@ -235,7 +238,8 @@ def main():
         end_times = get_oldest(datastream_mapping)
         print(f"Oldest detected streams: {end_times}")
 
-        for sensor in ['viirs', 'modis']:
+        no_data=1
+        for sensor in ['viirs']:
             sensor_id=DEVICE_ID_MAP[sensor]
             end_time = end_times[sensor_id].strftime('%Y-%m-%dT%H:%M:00')
             start_time = end_times[sensor_id] - timedelta(days=30)
@@ -246,10 +250,12 @@ def main():
 
             if meta['Result Count'] > 0:
                 save_results(results, datastream_mapping)
+                no_data=0
             else:
                 print(f"No results to save for {volc_name} {sensor} in {dates}")
 
         print(f"Ran HotLINK for {loc} in {time.time() - t1} seconds")
-
+        return no_data
 if __name__ == "__main__":
-    main()
+    exit_code=main()
+    exit(exit_code)
