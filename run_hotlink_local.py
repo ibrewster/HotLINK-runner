@@ -295,7 +295,7 @@ def save_results(results, mapping):
                         logging.warning(f"Warning: No datastream_id for {result_key} with sensor {sensor}")
         cursor.connection.commit()
 
-def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
+def load_file_list() -> pandas.DataFrame:
     # Get a list of files
     input_path = pathlib.Path(config.DATA_PATH)
     df = None
@@ -328,10 +328,8 @@ def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
     if df is None or df.empty:
         return sat, pandas.DataFrame()
 
-    df['key'] = df.merge(files[['path', 'key']], left_on='file_1', right_on='path', how='left')['key']
-
-    # Extract the final list of files
-    # results = df.to_numpy().tolist()
+    # df['key'] = df.merge(files[['path', 'key']], left_on='file_1', right_on='path', how='left')['key']
+    
     return sat, df
 
 def file_key(file):
