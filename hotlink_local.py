@@ -175,8 +175,7 @@ def resample(
             destination=area,
             datasets=datasets,
             reduce_data=True,
-            method='bilinear',
-            radius_of_influence=750
+            radius_of_influence=1500
         )
 
         mir = cropscn[datasets[0]].to_numpy()
