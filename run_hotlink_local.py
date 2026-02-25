@@ -29,8 +29,8 @@ import config
 import hotlink_local
 import mattermost
 
-
 ########## CONSTANTS #########
+
 LOCATIONS = [
     'Korovin',
     'Martin',
@@ -46,7 +46,7 @@ LOCATIONS = [
     'Gareloi',
     'Okmok',
     'Bogoslof',
-    'Augustine', 
+    'Augustine',
     'Pavlof',
     'Cleveland',
     'Shishaldin',
@@ -80,7 +80,6 @@ DEVICE_ID_MAP = {
 }
 
 #############################
-
 
 @contextmanager
 def db_cursor(host, user, password, dbname=config.db_name, port=5432, autocommit=False):
@@ -157,7 +156,6 @@ def get_datastream_mapping(location):
     }
     return mapping
 
-
 @lru_cache(None)
 def get_volc(vent):
     VOLCS = load_volcs()
@@ -195,6 +193,7 @@ def get_start(datastreams):
     WHERE datastream_id = ANY(%s)
     AND timestamp >= now() - '7 days'::interval
 """
+
     with preevents_cursor() as cursor:
         for sensor, ids in sensor_ids.items():
             if ids: # Should always be true
@@ -209,10 +208,10 @@ def save_mir_image(img, title):
     plt.imshow(img)
     plt.colorbar()
     plt.title(title)
-    
+
     out = BytesIO()
     fig.savefig(out, format="png")
-    
+
     out.seek(0)
     plt.close()
     return out
@@ -220,15 +219,16 @@ def save_mir_image(img, title):
 def post_mattermost(img, volcano_id, filename, meta):
     VOLCS = load_volcs()
     volcano = VOLCS.loc[VOLCS['id'] == volcano_id, 'name'].iloc[0]
-    
+
     message = f"""### {volcano} HotLINK Detection.
 **Image Date:** {meta['Date'].strftime('%m/%d/%Y')}
+
 **Max Probability:** {round(meta['Max Probability'] * 100)}%
 **Satelite:** {meta['Satellite']}"""
-    
+
     matt, channel = mattermost.connect()
     mattermost.mm_upload(matt, channel, message, image=img, img_name=filename)
-    
+
 def save_results(results, mapping):
     # Save results to PREEVENTS database
     results['Day/Night Flag'] = results['Day/Night Flag'].apply(lambda x: json.dumps({"day_night": x}))
@@ -237,16 +237,16 @@ def save_results(results, mapping):
             sensor = row["Sensor"].lower() # Pull from results for good measure
             sensor = DEVICE_ID_MAP[sensor]
             timestamp = row["Date"]
-            
+
             # Save the MIR Image
             mir_data = row['MIRImage']
             mir_filename = f"{splitext(row['Data File'])[0]}_mir.png"
             mir_title = f"Middle Infrared\n{timestamp.strftime('%Y-%m-%d %H:%M')}"
             img_bytes = save_mir_image(mir_data, mir_title)
-            
-            if row['Max Probability'] >= 0.75 and json.loads(row['Day/Night Flag'])['day_night'] == 'N':
+
+            if row['Max Probability'] >= 0.5 and json.loads(row['Day/Night Flag'])['day_night'] == 'N':
                 post_mattermost(img_bytes, row['Volcano ID'], mir_filename, row)
-            
+
             # Save the metadata record
             metadata = {"satellite": row["Satellite"], "sensor": row["Sensor"]}
             metadata_json = json.dumps(metadata)
@@ -263,7 +263,7 @@ def save_results(results, mapping):
                     """,
                     (metadata_datastream, timestamp, metadata_json)
                 )
-                
+
             # Save the value records
             for result_key in VARIABLE_ID_MAP.keys():
                 if result_key in row and not pandas.isna(row[result_key]):
@@ -292,7 +292,6 @@ def save_results(results, mapping):
                     else:
                         logging.warning(f"Warning: No datastream_id for {result_key} with sensor {sensor}")
         cursor.connection.commit()
-
 
 def load_file_list() -> list[str| None, list[list[pathlib.Path]]]:
     # Get a list of files
@@ -351,12 +350,12 @@ def main():
             volc = get_volc(loc)
             elev = volc['elev']
             volc_name = volc['name']
-    
+
             datastream_mapping = get_datastream_mapping(volc_name)
             if not datastream_mapping:
                 logging.warning(f"WARNING: No datastreams found for {volc_name}")
                 continue
-    
+
             start_times = get_start(datastream_mapping)
             try:
                 start_time = start_times[viirs_id]
@@ -371,12 +370,12 @@ def main():
             ####### DEBUG. REMOVE ME########
             is_new = files['start_time'] < start_time
             volc_files = files[is_new & ~is_processed]
-    
+
             if volc_files.empty:
                 logging.info(f"No new, unprocessed files to process for {volc_name}")
                 logging.info("---------------------")
                 continue
-    
+
             saved_records = 0
             process_idx = 0
             
@@ -405,30 +404,30 @@ def main():
                 
                 future_files[future] = (orbit, fkey)
                 futures.append(future)
-    
+
             logging.info(f"Submitted {len(futures)} jobs for processing.")
             for future in as_completed(futures):
                 process_idx += 1
                 orbit, fkey = future_files.get(future)
                 logging.info(f"Processing results for orbit {orbit} ({process_idx}/{len(orbit_groups)})")
                 try:
-                    try:
-                        results, meta = future.result()
-                    except hotlink_local.CoverageError as e:
-                        logging.info(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} (orbit {orbit})")
-                        continue
-                    except hotlink_local.AgeError as e:
-                        logging.info("Orbit older than most recent results for this location. Skipping.")
-                        continue
-                    finally:
-                        # Mark this file as having been attempted, so we don't try it again
-                        exc_type, _, _ = sys.exc_info()
-                        if exc_type is None:
-                            db.setex(fkey, 129600, "1")
+                    results, meta = future.result()
+                except hotlink_local.CoverageError as e:
+                    logging.info(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} (orbit {orbit})")
+                    continue
+                except hotlink_local.AgeError as e:
+                    logging.info("Orbit older than most recent results for this location. Skipping.")
+                    continue
                 except Exception as e:
                     # Log the exception, but don't mark this file as processed.
                     logging.error(f"Unknown exception while processing orbit: {e}")
-                    continue
+                    continue                
+                finally:
+                    # Mark this file as having been attempted, so we don't try it again
+                    exc_type, _, _ = sys.exc_info()
+                    if exc_type is None:
+                        db.setex(fkey, 129600, "1")
+
 
                 if not results.empty and meta['Result Count'] > 0:
                     ########## DEBUG: Uncomment###########
