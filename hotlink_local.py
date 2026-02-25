@@ -33,8 +33,11 @@ class CoverageError(Exception):
 class AgeError(Exception):
     pass
 
-def _gen_output_name(dest, files):
-    img_date = datetime.strptime(extract_datetime(files[0]), '%Y%m%dT%H%M%S')
+def _gen_output_name(dest, files_or_date):
+    if isinstance(files_or_date, (list, tuple)):
+        img_date = datetime.strptime(extract_datetime(files_or_date[0]), '%Y%m%dT%H%M%S')
+    else:
+        img_date = files_or_date
     out_file =  dest / img_date.strftime('%Y%m%d_%H%M.npy')
     return out_file
 
@@ -128,12 +131,10 @@ def extract_datetime(filename: pathlib.PosixPath) -> str:
 
     return f"{date_part}T{time_part}"
 
-def load_and_resample(
+def resample(
     start_time: datetime,
-    datasets: Sequence[str],
-    reader: str,
     area: geometry.AreaDefinition,
-    in_files: Sequence,
+    scn: Scene,
     out_file: str,
 ) -> None:
     """
@@ -142,14 +143,10 @@ def load_and_resample(
 
     Parameters
     ----------
-    datasets : Sequence[str]
-        List of dataset names to load and process.
-    reader : str
-        Reader type used by SatPy to load the datasets.
     area : geometry.AreaDefinition
         The area to which the data should be resampled.
-    in_files : Sequence
-        List of input file paths containing the datasets.
+    scn : satpy.Scene
+        The loaded satpy.Scene to be resampled
     out_file : str
         Path to the output file where the resampled data will be saved.
 
@@ -169,15 +166,11 @@ def load_and_resample(
     # Loading the scene results in warnings about an ineficient chunking operations
     # Since this is SatPy, and we can't do anything about it, just ignore the warnings.
     warnings.simplefilter("ignore", UserWarning)
-
-    scn=Scene(reader=reader,filenames=[str(f.absolute()) for f in in_files])
-    scn.load(datasets,calibration='radiance')
+    datasets = ['I04','I05'] # VIIRS, mir/tir
 
     try:
-        ########### DEBUG: UNCOMENT ##############
-        # if scn.start_time.replace(tzinfo=UTC) < start_time:
-        #    raise AgeError
-        #########################################
+        if scn.start_time.replace(tzinfo=UTC) < start_time:
+            raise AgeError
 
         cropscn = scn.resample(destination=area, datasets=datasets)
 
@@ -202,14 +195,13 @@ def load_and_resample(
         if 'cropscn' in locals():
             cropscn.unload()
             del mir, tir, cropscn
-        scn.unload()
-        del scn
+            
         gc.collect()
 
 def preprocess(
     start_time,
     vent,
-    results,
+    scn, 
     sat,
     folder='./data',
     output=pathlib.Path('./Output')
@@ -218,24 +210,15 @@ def preprocess(
 
     area=area_definition('name',vent,sat)
 
-    if sat.lower() == 'viirs':
-        reader = 'viirs_sdr'
-        datasets = ['I04','I05']
-    else:
-        reader = 'modis_l1b'
-        datasets = ['21', '32']
-
-    input_files = tuple(results)
-
     t1 = time.time()
     logging.info("Beginning resampling")
 
-    out_file =  _gen_output_name(dest, input_files)
+    out_file =  _gen_output_name(dest, scn.start_time)
     try:
-        load_and_resample(start_time, datasets, reader, area, input_files, out_file)
+        resample(start_time, area, scn, out_file)
         meta = {
             out_file.name: {
-                'satelite': input_files[0].name.split('_')[1],
+                'satelite': scn['I04'].attrs['platform_name'],
                 'sensor': sat,
             }
         }
@@ -243,7 +226,7 @@ def preprocess(
         raise
 
     except Exception as e:
-        logging.error(f"Unable to process file(s) {input_files} Exception occured:\n{e}")
+        logging.error(f"Unable to process scene. Exception occured:\n{e}")
         raise
 
     logging.info(f"Resampling complete in {time.time() - t1} seconds")
@@ -255,7 +238,7 @@ def get_results(
     start_time: datetime,
     vent: str | tuple[float, float],
     elevation: int,
-    files: list[pathlib.PosixPath],
+    scn: Scene,
     sensor: str,
     out_dir: str | pathlib.Path | None = None
 ) -> (pandas.DataFrame, dict):
@@ -368,7 +351,7 @@ def get_results(
     download_meta = preprocess(
         start_time,
         vent,
-        files,
+        scn,
         sensor,
         folder = data_path,
         output=output_dir

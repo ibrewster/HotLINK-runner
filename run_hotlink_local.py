@@ -22,6 +22,8 @@ import pandas
 import psycopg
 import redis
 
+from satpy import Scene
+
 from hotlink import support_functions
 import matplotlib.pyplot as plt
 
@@ -345,105 +347,108 @@ def main():
     db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        for loc in LOCATIONS:
-            # Make sure we are using the canonical volcano.
-            volc = get_volc(loc)
-            elev = volc['elev']
-            volc_name = volc['name']
-
-            datastream_mapping = get_datastream_mapping(volc_name)
-            if not datastream_mapping:
-                logging.warning(f"WARNING: No datastreams found for {volc_name}")
-                continue
-
-            start_times = get_start(datastream_mapping)
-            try:
-                start_time = start_times[viirs_id]
-            except KeyError:
-                logging.warning(f"No VIIRS datastreams found for {volc_name}")
+        orbit_groups = files.groupby("orbit")
+        for orbit, group in orbit_groups:
+            if group.empty:
+                logging.info(f"No files to process for orbit {orbit}")
                 continue
             
-            logging.info(f"Found a start time of {start_time} for volcano {volc_name}")
-            redis_keys = set(db.keys(f"{volc_name}:*"))
-            is_processed = (f"{volc_name}:" + files['key']).isin(redis_keys)
-            is_new = files['start_time'] > start_time
-            ####### DEBUG. REMOVE ME########
-            is_new = files['start_time'] < start_time
-            volc_files = files[is_new & ~is_processed]
-
-            if volc_files.empty:
-                logging.info(f"No new, unprocessed files to process for {volc_name}")
-                logging.info("---------------------")
-                continue
-
-            saved_records = 0
-            process_idx = 0
+            logging.info(f"Loading files for orbit {orbit}")
+            orbit_date = group.loc[0, 'start_time']
+            file_list = list(
+                group[["file_1", "file_2", "file_3"]]
+                .stack()
+            )
             
-            # Process in batches, refreshing the ThreadPoolExecutor between each, 
-            # to avoid "too many open files" issue.
-            orbit_groups = volc_files.groupby("orbit")
+            scn=Scene(reader='viirs_sdr',filenames=[str(f.absolute()) for f in file_list])
+            scn.load(['I04','I05'],calibration='radiance')
+        
             futures = []
-            future_files = {}            
-            for orbit, group in orbit_groups:
-                fkey = group.loc[0, 'key']
-                file_date = group.loc[0, 'start_time']
-                file_list = list(
-                    group[["file_1", "file_2", "file_3"]]
-                    .stack()
-                )
+            future_files = {}
+            
+            for loc in LOCATIONS:
+                # Make sure we are using the canonical volcano.
+                volc_info = get_volc(loc)
+                elev = volc_info['elev']
+                volc_name = volc_info['name']
+    
+                datastream_mapping = get_datastream_mapping(volc_name)
+                if not datastream_mapping:
+                    logging.warning(f"WARNING: No datastreams found for {volc_name}")
+                    continue
+    
+                start_times = get_start(datastream_mapping)
+                try:
+                    start_time = start_times[viirs_id]
+                except KeyError:
+                    logging.warning(f"No VIIRS datastreams found for {volc_name}")
+                    continue
                 
-                logging.debug(f"Submitting {orbit} with time {file_date}")
+                logging.info(f"Found a start time of {start_time} for volcano {volc_name}")
+                
+                if start_time > orbit_date:
+                    logging.info(f"Orbit is older than newest data for {volc_name}. Skipping volc.")
+                    continue # This is old data for this volcano
+                
+                redis_keys = set(db.keys(f"{volc_name}:*"))
+                if f"{volc_name}:{orbit}" in redis_keys:
+                    logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
+                    continue
+                
+                logging.debug(f"Submitting {orbit} with time {orbit_date}")
                 future = executor.submit(
                     hotlink_local.get_results,
                     start_time,
                     loc,
                     elev,
-                    file_list,
+                    scn,
                     sat
                 )
                 
-                future_files[future] = (orbit, fkey)
+                future_files[future] = (orbit, volc_name, datastream_mapping)
                 futures.append(future)
 
             logging.info(f"Submitted {len(futures)} jobs for processing.")
+            saved_records = 0
+            process_idx = 0            
             for future in as_completed(futures):
                 process_idx += 1
-                orbit, fkey = future_files.get(future)
-                logging.info(f"Processing results for orbit {orbit} ({process_idx}/{len(orbit_groups)})")
+                orbit, volc, datastreams = future_files.get(future)
+                logging.info(f"Processing results for {volc}, orbit {orbit} ({process_idx}/{len(futures)})")
+                mark_processed = True
                 try:
                     results, meta = future.result()
                 except hotlink_local.CoverageError as e:
-                    logging.info(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} (orbit {orbit})")
+                    logging.info(f"Insufficient coverage for volcano {volc}, {sat}. {e} (orbit {orbit})")
                     continue
                 except hotlink_local.AgeError as e:
-                    logging.info("Orbit older than most recent results for this location. Skipping.")
+                    logging.info(f"Orbit {orbit} older than most recent results for {volc}. Skipping.")
                     continue
                 except Exception as e:
                     # Log the exception, but don't mark this file as processed.
-                    logging.error(f"Unknown exception while processing orbit: {e}")
-                    continue                
+                    logging.exception(f"Unknown exception while processing {volc}, orbit: {e}")
+                    mark_processed = False
+                    continue
                 finally:
                     # Mark this file as having been attempted, so we don't try it again
                     exc_type, _, _ = sys.exc_info()
-                    if exc_type is None:
-                        db.setex(fkey, 129600, "1")
-
+                    if exc_type is None and mark_processed:
+                        db.setex(f"{volc}:{orbit}", 129600, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
-                    ########## DEBUG: Uncomment###########
-                    # save_results(results, datastream_mapping)
+                    save_results(results, datastreams)
                     
                     saved_records += 1
-                    logging.info(f"Saved results for {volc_name} - orbit {orbit}")
+                    logging.info(f"Saved results for {volc} - orbit {orbit}")
                 else:
-                    logging.info(f"No results to save for orbit {orbit}, {volc_name} {sat}")
+                    logging.info(f"No results to save for orbit {orbit}, {volc} {sat}")
 
-                logging.info(f"Ran HotLINK for {loc}, orbit {orbit} ({process_idx}/{len(futures)})")
+                logging.info(f"Ran HotLINK for {volc}, orbit {orbit} ({process_idx}/{len(futures)})")
+                logging.info("----------------------------------")
 
-        logging.info(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(futures)} files) since {start_time}")
-        logging.info("----------------------------------")
+            logging.info(f"All locations processed for orbit {orbit}, saved {saved_records} new records (out of {len(futures)} locations) since {orbit_date}")
 
-    logging.info("All files processed.")
+    logging.info("All orbits processed.")
     db.close()
 
 if __name__ == "__main__":
