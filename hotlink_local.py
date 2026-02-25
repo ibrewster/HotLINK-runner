@@ -171,8 +171,14 @@ def resample(
     try:
         if scn.start_time.replace(tzinfo=UTC) < start_time:
             raise AgeError
-
-        cropscn = scn.resample(destination=area, datasets=datasets)
+        
+        cropscn = scn.resample(
+            destination=area,
+            datasets=datasets,
+            reduce_data=True,
+            method='bilinear',
+            radius_of_influence=750
+        )
 
         mir = cropscn[datasets[0]].to_numpy()
         tir = cropscn[datasets[1]].to_numpy()

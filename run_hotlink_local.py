@@ -1,4 +1,6 @@
 import matplotlib
+import numpy
+
 matplotlib.use('Agg')
 
 import logging
@@ -22,9 +24,12 @@ import pandas
 import psycopg
 import redis
 
+from pyproj import Transformer
 from satpy import Scene
+from shapely.geometry import Point, Polygon
 
 from hotlink import support_functions
+
 import matplotlib.pyplot as plt
 
 import config
@@ -343,6 +348,11 @@ def main():
 
     viirs_id = DEVICE_ID_MAP['viirs']
     db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+    transformer = Transformer.from_crs(
+        "EPSG:4326",
+        "+proj=laea +lat_0=90 +lon_0=0 +datum=WGS84",  # North Polar LAEA
+        always_xy=True
+    )
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         orbit_groups = files.groupby("orbit")
@@ -360,6 +370,22 @@ def main():
             
             scn=Scene(reader='viirs_sdr',filenames=[str(f.absolute()) for f in file_list])
             scn.load(['I04','I05'],calibration='radiance')
+            
+            lons, lats = scn['I04'].area.get_lonlats()
+            lons = lons.compute()
+            lats = lats.compute()
+            top    = numpy.column_stack([lons[0,  :   ],  lats[0,  :   ]])
+            right  = numpy.column_stack([lons[:,  -1  ],  lats[:,  -1  ]])
+            bottom = numpy.column_stack([lons[-1, ::-1],  lats[-1, ::-1]])
+            left   = numpy.column_stack([lons[::-1, 0 ],  lats[::-1, 0 ]])
+            
+            perimeter = numpy.vstack([top, right, bottom, left])
+            valid = numpy.isfinite(perimeter).all(axis=1)
+            perimeter = perimeter[valid]
+            x, y = transformer.transform(perimeter[:, 0], perimeter[:, 1])
+            projected = numpy.column_stack([x, y])
+            
+            swath_poly = Polygon(projected).convex_hull      
         
             futures = []
             future_files = {}
@@ -367,8 +393,16 @@ def main():
             for loc in LOCATIONS:
                 # Make sure we are using the canonical volcano.
                 volc_info = get_volc(loc)
+                volc_lon = volc_info['lon']
+                volc_lat = volc_info['lat']
+                volc_x, volc_y = transformer.transform(volc_lon, volc_lat)
                 elev = volc_info['elev']
                 volc_name = volc_info['name']
+                
+                volc_point = Point(volc_x, volc_y)                
+                if not swath_poly.contains(volc_point):
+                    logging.info(f"Skipping {volc_name} as it is not covered by this swath.")
+                    continue
     
                 datastream_mapping = get_datastream_mapping(volc_name)
                 if not datastream_mapping:
