@@ -2,11 +2,9 @@ import gc
 import logging
 import pathlib
 import re
-import shutil
 import time
 import warnings
 
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, UTC
 
@@ -16,8 +14,9 @@ import pandas
 import utm
 
 from hotlink import support_functions
-from hotlink.preprocess import _gen_output_dir, area_definition
+from hotlink.preprocess import area_definition
 from pyresample import geometry
+
 from satpy import Scene
 from tqdm import tqdm
 
