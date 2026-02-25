@@ -352,7 +352,7 @@ def main():
                 continue
             
             logging.info(f"Loading files for orbit {orbit}")
-            orbit_date = group.loc[0, 'start_time']
+            orbit_date = group['start_time'].min()
             file_list = list(
                 group[["file_1", "file_2", "file_3"]]
                 .stack()
