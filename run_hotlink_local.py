@@ -223,7 +223,8 @@ def post_mattermost(img, volcano_id, filename, meta):
     
     message = f"""### {volcano} HotLINK Detection.
 **Image Date:** {meta['Date'].strftime('%m/%d/%Y')}
-**Max Probability:** {round(meta['Max Probability'] * 100)}%"""
+**Max Probability:** {round(meta['Max Probability'] * 100)}%
+**Satelite:** {meta['Satellite']}"""
     
     matt, channel = mattermost.connect()
     mattermost.mm_upload(matt, channel, message, image=img, img_name=filename)
@@ -344,96 +345,103 @@ def main():
     viirs_id = DEVICE_ID_MAP['viirs']
     db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
-    for loc in LOCATIONS:
-        # Make sure we are using the canonical volcano.
-        volc = get_volc(loc)
-        elev = volc['elev']
-        volc_name = volc['name']
-
-        datastream_mapping = get_datastream_mapping(volc_name)
-        if not datastream_mapping:
-            logging.warning(f"WARNING: No datastreams found for {volc_name}")
-            continue
-
-        start_times = get_start(datastream_mapping)
-        start_time = start_times[viirs_id]
-        logging.info(f"Found a start time of {start_time} for volcano {volc_name}")
-        redis_keys = set(db.keys(f"{volc_name}:*"))
-        is_processed = (f"{volc_name}:" + files['key']).isin(redis_keys)
-        is_new = files['start_time'] > start_time
-        volc_files = files[is_new & ~is_processed]
-
-        if volc_files.empty:
-            logging.info(f"No new, unprocessed files to process for {volc_name}")
-            logging.info("---------------------")
-            continue
-
-
-        saved_records = 0
-        process_idx = 0
-        
-        # Process in batches, refreshing the ThreadPoolExecutor between each, 
-        # to avoid "too many open files" issue.
-        BATCH_SIZE = 60
-        to_process_all = volc_files.to_numpy().tolist()
-        chunks = [to_process_all[i:i + BATCH_SIZE] for i in range(0, len(to_process_all), BATCH_SIZE)]
-        for batch_idx, to_process in enumerate(chunks):
-            logging.info(f"--- Starting Batch {batch_idx + 1}/{len(chunks)} ---")        
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                futures = []
-                future_files = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for loc in LOCATIONS:
+            # Make sure we are using the canonical volcano.
+            volc = get_volc(loc)
+            elev = volc['elev']
+            volc_name = volc['name']
+    
+            datastream_mapping = get_datastream_mapping(volc_name)
+            if not datastream_mapping:
+                logging.warning(f"WARNING: No datastreams found for {volc_name}")
+                continue
+    
+            start_times = get_start(datastream_mapping)
+            try:
+                start_time = start_times[viirs_id]
+            except KeyError:
+                logging.warning(f"No VIIRS datastreams found for {volc_name}")
+                continue
+            
+            logging.info(f"Found a start time of {start_time} for volcano {volc_name}")
+            redis_keys = set(db.keys(f"{volc_name}:*"))
+            is_processed = (f"{volc_name}:" + files['key']).isin(redis_keys)
+            is_new = files['start_time'] > start_time
+            ####### DEBUG. REMOVE ME########
+            is_new = files['start_time'] < start_time
+            volc_files = files[is_new & ~is_processed]
+    
+            if volc_files.empty:
+                logging.info(f"No new, unprocessed files to process for {volc_name}")
+                logging.info("---------------------")
+                continue
+    
+            saved_records = 0
+            process_idx = 0
+            
+            # Process in batches, refreshing the ThreadPoolExecutor between each, 
+            # to avoid "too many open files" issue.
+            orbit_groups = volc_files.groupby("orbit")
+            futures = []
+            future_files = {}            
+            for orbit, group in orbit_groups:
+                fkey = group.loc[0, 'key']
+                file_date = group.loc[0, 'start_time']
+                file_list = list(
+                    group[["file_1", "file_2", "file_3"]]
+                    .stack()
+                )
                 
-                for idx, file_list in enumerate(to_process):
-                    fkey = f"{volc_name}:{file_list[-1]}"
-                    file_date = file_list[-2]
+                logging.debug(f"Submitting {orbit} with time {file_date}")
+                future = executor.submit(
+                    hotlink_local.get_results,
+                    start_time,
+                    loc,
+                    elev,
+                    file_list,
+                    sat
+                )
+                
+                future_files[future] = (orbit, fkey)
+                futures.append(future)
     
-                    logging.debug(f"Submitting {file_list[0].name} with time {file_date} ({idx + 1}/{len(to_process)})")
-    
-                    future = executor.submit(
-                        hotlink_local.get_results,
-                        start_time,
-                        loc,
-                        elev,
-                        file_list[:-2],
-                        sat
-                    )
-                    future_files[future] = (file_list[0], fkey)
-                    futures.append(future)
-    
-                logging.info(f"Submitted {len(to_process)} jobs for processing.")
-                for future in as_completed(futures):
-                    process_idx += 1
-                    filename, fkey = future_files.get(future)
-                    logging.info(f"Processing results for file {filename} ({process_idx}/{len(to_process_all)})")
+            logging.info(f"Submitted {len(futures)} jobs for processing.")
+            for future in as_completed(futures):
+                process_idx += 1
+                orbit, fkey = future_files.get(future)
+                logging.info(f"Processing results for orbit {orbit} ({process_idx}/{len(orbit_groups)})")
+                try:
                     try:
-                        try:
-                            results, meta = future.result()
-                        except hotlink_local.CoverageError as e:
-                            logging.info(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} ({filename})")
-                            continue
-                        except hotlink_local.AgeError as e:
-                            logging.info("File older than most recent results for this location. Skipping.")
-                            continue
-                        finally:
-                            # Mark this file as having been attempted, so we don't try it again
-                            exc_type, _, _ = sys.exc_info()
-                            if exc_type is None:
-                                db.setex(fkey, 129600, "1")
-                    except Exception as e:
-                        # Log the exception, but don't mark this file as processed.
-                        logging.error(f"Unknown exception while processing file: {e}")
+                        results, meta = future.result()
+                    except hotlink_local.CoverageError as e:
+                        logging.info(f"Insufficient coverage for volcano {volc_name}, {sat}. {e} (orbit {orbit})")
                         continue
-    
-                    if not results.empty and meta['Result Count'] > 0:
-                        save_results(results, datastream_mapping)
-                        saved_records += 1
-                        logging.info(f"Saved results for {volc_name} - {filename}")
-                    else:
-                        logging.info(f"No results to save for file {filename}, {volc_name} {sat}")
-    
-                    logging.info(f"Ran HotLINK for {loc}, {filename} ({process_idx}/{len(to_process_all)})")
+                    except hotlink_local.AgeError as e:
+                        logging.info("Orbit older than most recent results for this location. Skipping.")
+                        continue
+                    finally:
+                        # Mark this file as having been attempted, so we don't try it again
+                        exc_type, _, _ = sys.exc_info()
+                        if exc_type is None:
+                            db.setex(fkey, 129600, "1")
+                except Exception as e:
+                    # Log the exception, but don't mark this file as processed.
+                    logging.error(f"Unknown exception while processing orbit: {e}")
+                    continue
 
-        logging.info(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(to_process_all)} files) since {start_time}")
+                if not results.empty and meta['Result Count'] > 0:
+                    ########## DEBUG: Uncomment###########
+                    # save_results(results, datastream_mapping)
+                    
+                    saved_records += 1
+                    logging.info(f"Saved results for {volc_name} - orbit {orbit}")
+                else:
+                    logging.info(f"No results to save for orbit {orbit}, {volc_name} {sat}")
+
+                logging.info(f"Ran HotLINK for {loc}, orbit {orbit} ({process_idx}/{len(futures)})")
+
+        logging.info(f"All files processed for volc {volc_name}, saved {saved_records} new records (out of {len(futures)} files) since {start_time}")
         logging.info("----------------------------------")
 
     logging.info("All files processed.")

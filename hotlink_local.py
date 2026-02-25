@@ -113,11 +113,13 @@ def match_viirs(mir_files: list | tuple, tir_files: list | tuple, geog_files: li
     df_merged = pandas.merge(df, df2, how="inner", on="match_key", suffixes=("_1", "_2"))
     df_merged = pandas.merge(df_merged, df_geog, how="inner", on="match_key")
     df_merged.rename(columns={"file": "file_3"}, inplace=True)
+    df_merged["orbit"] = df_merged["file_1"].apply(lambda p: int(p.parent.name))
+    
 
     df_merged["start_time"], df_merged["end_time"] = zip(*df_merged["file_3"].map(viirs_start_end_from_name))
-    df_merged = df_merged.sort_values(['start_time'], kind="stable")
+    df_merged = df_merged.sort_values(['start_time'], kind="stable").reset_index(drop=True)
 
-    return df_merged[['file_1', 'file_2', 'file_3', 'start_time']]
+    return df_merged[['file_1', 'file_2', 'file_3', 'start_time', 'orbit']]
 
 def extract_datetime(filename: pathlib.PosixPath) -> str:
     parts = filename.name.split("_")
@@ -172,8 +174,10 @@ def load_and_resample(
     scn.load(datasets,calibration='radiance')
 
     try:
-        if scn.start_time.replace(tzinfo=UTC) < start_time:
-            raise AgeError
+        ########### DEBUG: UNCOMENT ##############
+        # if scn.start_time.replace(tzinfo=UTC) < start_time:
+        #    raise AgeError
+        #########################################
 
         cropscn = scn.resample(destination=area, datasets=datasets)
 
@@ -539,60 +543,12 @@ def get_results(
     results['Satellite'] = file_meta.map(lambda x: x.get('satelite'))
     results['MIRImage'] = list(mir_data)
 
-    SAVE_IMAGES = False # TODO: make this a user passable flag somewhere.
-
     for idx, (image_date, img_file) in tqdm(
         enumerate(zip(img_dates, data_files)),
         total=len(img_dates),
         unit="IMAGES",
         desc="SAVING IMAGES"
     ):
-        if SAVE_IMAGES:
-            ########## IMAGE SAVE/Data File Archive #################
-            # This section deals with saving PNG images and archiving
-            # the pre-processed data files. Remove this section if not
-            # desired
-            #########################################################
-
-            # Save the .png images. Second loop, but this one doesn't lend itself to
-            # parallel processing at all.
-            file_out_dir = _gen_output_dir(img_file, out_dir)
-            file_out_dir.mkdir(parents=True, exist_ok=True)
-
-            # Save MIR images
-            mir_image = file_out_dir / f"{img_file.stem}_mir.png"
-            results.loc[idx, 'MIR Image'] = str(mir_image)
-
-            hotlink.process._save_fig(
-                mir_data[idx],
-                mir_image,
-                f"Middle Infrared\n{image_date.strftime('%Y-%m-%d %H:%M')}"
-            )
-
-            # slice_prob_active = prob_active[idx]
-
-            # Optional: save probability GeoTIFF (currently disabled)
-            # NOTE: These files are EXTREAMLY tiny at only 24px x 24px
-            # geotiff_file = output_dir / f"{img_file.stem}_probability.tif"
-            # result['Probability TIFF'] = str(geotiff_file)
-
-            # with rasterio.open(
-                # geotiff_file,
-                # 'w',
-                # driver = 'GTiff',
-                # height = slice_prob_active.shape[0],
-                # width = slice_prob_active.shape[1],
-                # count = 1,
-                # dtype = slice_prob_active.dtype,
-                # crs=crs,
-                # transform=transform
-            # ) as dst:
-                # dst.write(slice_prob_active, 1)
-
-            # Move the processed data file to the output directory
-            shutil.move(str(img_file), str(file_out_dir / img_file.name))
-            ###################### END IMAGE SECTION ###########################
-
         img_file.unlink(missing_ok=True)
 
     meta['Result Count'] = len(results)
