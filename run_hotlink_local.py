@@ -1,3 +1,5 @@
+import time
+
 import matplotlib
 import numpy
 
@@ -24,6 +26,7 @@ import pandas
 import psycopg
 import redis
 
+from pyresample.geometry import AreaDefinition
 from pyproj import Transformer
 from satpy import Scene
 from shapely.geometry import Point, Polygon
@@ -348,19 +351,16 @@ def main():
 
     viirs_id = DEVICE_ID_MAP['viirs']
     db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-    transformer = Transformer.from_crs(
-        "EPSG:4326",
-        "+proj=laea +lat_0=90 +lon_0=0 +datum=WGS84",  # North Polar LAEA
-        always_xy=True
-    )
+    area_def = AreaDefinition.from_epsg(3338, resolution=371)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         orbit_groups = files.groupby("orbit")
         for orbit, group in orbit_groups:
             redis_key = f"processed:{orbit}"
-            if db.exists(redis_key):
-                logging.info(f"Orbit {orbit} already processed. Skipping")
-                continue
+            ###### DEBUG - Uncomment######
+            # if db.exists(redis_key):
+                # logging.info(f"Orbit {orbit} already processed. Skipping")
+                # continue
             
             if group.empty:
                 logging.info(f"No files to process for orbit {orbit}")
@@ -375,40 +375,28 @@ def main():
             )
             
             scn=Scene(reader='viirs_sdr',filenames=[str(f.absolute()) for f in file_list])
-            scn.load(['I04','I05'],calibration='radiance')
+            datasets = ['I04','I05']
+            scn.load(datasets,calibration='radiance')
+                      
+            logging.info(f"Resampling and loading scene for orbit {orbit}")
+            # By resampling to albers here, and then loading the resampled datasets (next)
+            # we can extract the AOI for each volcano in seconds, rather than
+            # having to spend minutes per volcano re-loading the data for the entire swath
+            scn_albers = scn.resample(area_def, datasets=['I04', 'I05'])
             
-            lons, lats = scn['I04'].area.get_lonlats()
-            lons = lons.compute()
-            lats = lats.compute()
-            top    = numpy.column_stack([lons[0,  :   ],  lats[0,  :   ]])
-            right  = numpy.column_stack([lons[:,  -1  ],  lats[:,  -1  ]])
-            bottom = numpy.column_stack([lons[-1, ::-1],  lats[-1, ::-1]])
-            left   = numpy.column_stack([lons[::-1, 0 ],  lats[::-1, 0 ]])
+            for dataset in datasets:
+                t1 = time.time()
+                scn_albers[dataset].load()
+                logging.info(f"Loaded dataset {dataset} in {time.time() - t1}")            
             
-            perimeter = numpy.vstack([top, right, bottom, left])
-            valid = numpy.isfinite(perimeter).all(axis=1)
-            perimeter = perimeter[valid]
-            x, y = transformer.transform(perimeter[:, 0], perimeter[:, 1])
-            projected = numpy.column_stack([x, y])
-            
-            swath_poly = Polygon(projected).convex_hull      
-        
             futures = []
             future_files = {}
             
             for loc in LOCATIONS:
                 # Make sure we are using the canonical volcano.
                 volc_info = get_volc(loc)
-                volc_lon = volc_info['lon']
-                volc_lat = volc_info['lat']
-                volc_x, volc_y = transformer.transform(volc_lon, volc_lat)
                 elev = volc_info['elev']
                 volc_name = volc_info['name']
-                
-                volc_point = Point(volc_x, volc_y)                
-                if not swath_poly.contains(volc_point):
-                    logging.info(f"Skipping {volc_name} as it is not covered by this swath.")
-                    continue
     
                 datastream_mapping = get_datastream_mapping(volc_name)
                 if not datastream_mapping:
@@ -424,14 +412,16 @@ def main():
                 
                 logging.info(f"Found a start time of {start_time} for volcano {volc_name}")
                 
-                if start_time > orbit_date:
-                    logging.info(f"Orbit is older than newest data for {volc_name}. Skipping volc.")
-                    continue # This is old data for this volcano
+                ############ DEBUG: Uncomment ################
+                # if start_time > orbit_date:
+                    # logging.info(f"Orbit is older than newest data for {volc_name}. Skipping volc.")
+                    # continue # This is old data for this volcano
                 
-                redis_keys = set(db.keys(f"{volc_name}:*"))
-                if f"{volc_name}:{orbit}" in redis_keys:
-                    logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
-                    continue
+                # redis_keys = set(db.keys(f"{volc_name}:*"))
+                # if f"{volc_name}:{orbit}" in redis_keys:
+                    # logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
+                    # continue
+                ###############################################
                 
                 logging.debug(f"Submitting {orbit} with time {orbit_date}")
                 future = executor.submit(
@@ -439,7 +429,7 @@ def main():
                     start_time,
                     loc,
                     elev,
-                    scn,
+                    scn_albers,
                     sat
                 )
                 
@@ -475,7 +465,8 @@ def main():
                         db.setex(f"{volc}:{orbit}", 129600, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
-                    save_results(results, datastreams)
+                    ########## DEBUG: Uncomment ###########
+                    # save_results(results, datastreams)
                     
                     saved_records += 1
                     logging.info(f"Saved results for {volc} - orbit {orbit}")

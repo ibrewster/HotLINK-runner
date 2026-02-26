@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, UTC
 import hotlink
 import numpy
 import pandas
+import pyproj
 import utm
 
 from hotlink import support_functions
@@ -129,7 +130,8 @@ def extract_datetime(filename: pathlib.PosixPath) -> str:
     time_part = parts[3][1:7]  # remove 't' and truncate to 6 digits
 
     return f"{date_part}T{time_part}"
-
+    
+    
 def resample(
     start_time: datetime,
     area: geometry.AreaDefinition,
@@ -140,14 +142,9 @@ def resample(
     Load datasets, resample to a specified area, and save the combined data to a file.
     Resampled data file will be in UTM.
 
-    Parameters
-    ----------
-    area : geometry.AreaDefinition
-        The area to which the data should be resampled.
-    scn : satpy.Scene
-        The loaded satpy.Scene to be resampled
-    out_file : str
-        Path to the output file where the resampled data will be saved.
+    Parameters ---------- area : geometry.AreaDefinition The area to which the data should be
+    resampled. scn : satpy.Scene The loaded satpy.Scene to be resampled out_file : str Path to
+    the output file where the resampled data will be saved.
 
     Returns
     -------
@@ -168,18 +165,20 @@ def resample(
     datasets = ['I04','I05'] # VIIRS, mir/tir
 
     try:
-        if scn.start_time.replace(tzinfo=UTC) < start_time:
-            raise AgeError
-        
+        ############ DEBUG. Uncomment#########
+        # if scn.start_time.replace(tzinfo=UTC) < start_time:
+            # raise AgeError
+                
+        t1 = time.time()
         cropscn = scn.resample(
             destination=area,
             datasets=datasets,
-            reduce_data=True,
-            radius_of_influence=1500
+            reduce_data=True
         )
 
         mir = cropscn[datasets[0]].to_numpy()
         tir = cropscn[datasets[1]].to_numpy()
+        logging.info(f"Extracted data in {time.time() - t1}")
 
         total_pixels = mir.size
         valid_pixels = (~numpy.isnan(mir)).sum()
@@ -193,6 +192,8 @@ def resample(
 
         data = numpy.dstack((mir, tir))
         numpy.save(out_file, data)
+    except NotImplementedError:
+        raise CoverageError(f"Area of interest lies at least partially outside the scene")
     finally:
         # Probably overkill cleanup, but I've had issues with "too many open files"
         # in this code, so I'm not taking any chances here.
