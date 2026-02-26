@@ -165,9 +165,8 @@ def resample(
     datasets = ['I04','I05'] # VIIRS, mir/tir
 
     try:
-        ############ DEBUG. Uncomment#########
-        # if scn.start_time.replace(tzinfo=UTC) < start_time:
-            # raise AgeError
+        if scn.start_time.replace(tzinfo=UTC) < start_time:
+            raise AgeError 
                 
         t1 = time.time()
         cropscn = scn.resample(

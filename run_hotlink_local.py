@@ -357,10 +357,9 @@ def main():
         orbit_groups = files.groupby("orbit")
         for orbit, group in orbit_groups:
             redis_key = f"processed:{orbit}"
-            ###### DEBUG - Uncomment######
-            # if db.exists(redis_key):
-                # logging.info(f"Orbit {orbit} already processed. Skipping")
-                # continue
+            if db.exists(redis_key):
+                logging.info(f"Orbit {orbit} already processed. Skipping")
+                continue
             
             if group.empty:
                 logging.info(f"No files to process for orbit {orbit}")
@@ -412,16 +411,14 @@ def main():
                 
                 logging.info(f"Found a start time of {start_time} for volcano {volc_name}")
                 
-                ############ DEBUG: Uncomment ################
-                # if start_time > orbit_date:
-                    # logging.info(f"Orbit is older than newest data for {volc_name}. Skipping volc.")
-                    # continue # This is old data for this volcano
+                if start_time > orbit_date:
+                    logging.info(f"Orbit is older than newest data for {volc_name}. Skipping volc.")
+                    continue # This is old data for this volcano
                 
-                # redis_keys = set(db.keys(f"{volc_name}:*"))
-                # if f"{volc_name}:{orbit}" in redis_keys:
-                    # logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
-                    # continue
-                ###############################################
+                redis_keys = set(db.keys(f"{volc_name}:*"))
+                if f"{volc_name}:{orbit}" in redis_keys:
+                    logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
+                    continue
                 
                 logging.debug(f"Submitting {orbit} with time {orbit_date}")
                 future = executor.submit(
@@ -465,8 +462,7 @@ def main():
                         db.setex(f"{volc}:{orbit}", 129600, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
-                    ########## DEBUG: Uncomment ###########
-                    # save_results(results, datastreams)
+                    save_results(results, datastreams)
                     
                     saved_records += 1
                     logging.info(f"Saved results for {volc} - orbit {orbit}")
