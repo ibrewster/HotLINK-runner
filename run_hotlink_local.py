@@ -357,10 +357,16 @@ def main():
     with ThreadPoolExecutor(max_workers=4) as executor:
         orbit_groups = files.groupby("orbit")
         for orbit, group in orbit_groups:
+            redis_key = f"processed:{orbit}"
+            if db.exists(redis_key):
+                logging.info(f"Orbit {orbit} already processed. Skipping")
+                continue
+            
             if group.empty:
                 logging.info(f"No files to process for orbit {orbit}")
                 continue
             
+            all_processed = True
             logging.info(f"Loading files for orbit {orbit}")
             orbit_date = group['start_time'].min()
             file_list = list(
@@ -460,6 +466,7 @@ def main():
                     # Log the exception, but don't mark this file as processed.
                     logging.exception(f"Unknown exception while processing {volc}, orbit: {e}")
                     mark_processed = False
+                    all_processed = False
                     continue
                 finally:
                     # Mark this file as having been attempted, so we don't try it again
@@ -478,6 +485,8 @@ def main():
                 logging.info(f"Ran HotLINK for {volc}, orbit {orbit} ({process_idx}/{len(futures)})")
                 logging.info("----------------------------------")
 
+            if all_processed:
+                db.setex(redis_key, 129600, "1")
             logging.info(f"All locations processed for orbit {orbit}, saved {saved_records} new records (out of {len(futures)} locations) since {orbit_date}")
 
     logging.info("All orbits processed.")
