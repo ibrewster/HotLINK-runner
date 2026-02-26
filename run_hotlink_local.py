@@ -251,12 +251,16 @@ def save_results(results, mapping):
             # Save the MIR Image
             mir_data = row['MIRImage']
             mir_filename = f"{splitext(row['Data File'])[0]}_mir.png"
-            mir_title = f"Middle Infrared\n{timestamp.strftime('%Y-%m-%d %H:%M')}"
+            mir_title = f"Middle Infrared\n{timestamp.strftime('%Y-%m-%d %H:%M')} UTC"
             img_bytes = save_mir_image(mir_data, mir_title)
 
             if row['Max Probability'] >= 0.5 and json.loads(row['Day/Night Flag'])['day_night'] == 'N':
-                post_mattermost(img_bytes, row['Volcano ID'], mir_filename, row)
-
+                ############# DEBUG: Remove and uncomment ################
+                with open(f'/tmp/{mir_filename}', 'wb') as f:
+                    img_bytes.seek(0)
+                    f.write(img_bytes.read())
+                # post_mattermost(img_bytes, row['Volcano ID'], mir_filename, row)
+                ###########################################################
             # Save the metadata record
             metadata = {"satellite": row["Satellite"], "sensor": row["Sensor"]}
             metadata_json = json.dumps(metadata)
@@ -301,7 +305,8 @@ def save_results(results, mapping):
                         )
                     else:
                         logging.warning(f"Warning: No datastream_id for {result_key} with sensor {sensor}")
-        cursor.connection.commit()
+        ########## DEBUG: Uncomment #########
+        # cursor.connection.commit()
 
 def load_file_list() -> pandas.DataFrame:
     # Get a list of files
@@ -454,7 +459,7 @@ def main():
                     continue
                 except Exception as e:
                     # Log the exception, but don't mark this file as processed.
-                    logging.exception(f"Unknown exception while processing {volc}, orbit: {e}")
+                    logging.exception(f"Unknown exception while processing {volc}, orbit {orbit}: {e}")
                     mark_processed = False
                     all_processed = False
                     continue
@@ -465,8 +470,7 @@ def main():
                         db.setex(f"{volc}:{orbit}", 129600, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
-                    ########## DEBUG: Uncomment ###########
-                    # save_results(results, datastreams)
+                    save_results(results, datastreams)
                     
                     saved_records += 1
                     logging.info(f"Saved results for {volc} - orbit {orbit}")
