@@ -3,3 +3,4 @@ pandas
 psycopg
 redis
 mattermostdriver
+cartopy
