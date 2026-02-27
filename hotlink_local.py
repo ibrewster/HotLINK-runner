@@ -529,7 +529,7 @@ def get_results(
     # pull in metadata retrieved during the download
     file_meta = results['Data File'].map(lambda x: download_meta.get(x, {}))
     results['Satellite'] = file_meta.map(lambda x: x.get('satelite'))
-    results['MIRImage'] = list(support_functions.brightness_temperature(mir_data, wl=MIR_WL))
+    results['MIRImage'] = list(support_functions.brightness_temperature(mir_data*1e6, wl=MIR_WL))
 
     for idx, (image_date, img_file) in tqdm(
         enumerate(zip(img_dates, data_files)),

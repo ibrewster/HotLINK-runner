@@ -1,8 +1,6 @@
 import time
 
 import matplotlib
-import numpy
-
 matplotlib.use('Agg')
 
 import logging
@@ -22,16 +20,19 @@ from functools import lru_cache
 from io import BytesIO
 from os.path import splitext
 
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
 import pandas
 import psycopg
 import redis
+import utm
 
 from pyresample.geometry import AreaDefinition
-from pyproj import Transformer
 from satpy import Scene
-from shapely.geometry import Point, Polygon
 
 from hotlink import support_functions
+from hotlink.preprocess import area_definition
 
 import matplotlib.pyplot as plt
 
@@ -213,17 +214,56 @@ def get_start(datastreams):
 
     return latest_timestamps
 
-def save_mir_image(img, title):
-    fig = plt.figure(figsize=(4, 4))
-    plt.imshow(img)
-    plt.colorbar()
-    plt.title(title)
+def save_mir_image(img, title, volc_id):
+    # Convert img from Kelven to ºC
+    img -= 273.15
+    
+    VOLCS = load_volcs() # Cached, so essentially just a dictionary lookup
+    volc_lon, volc_lat = VOLCS.loc[VOLCS['id']==volc_id, ['lon', 'lat']].values[0]
+    volc_area: AreaDefinition = area_definition(volc_id, (volc_lat, volc_lon), 'viirs')
+    
+    _, _, zone_number, zone_letter = utm.from_latlon(volc_lat, volc_lon)
+    epsg = 32600 + zone_number if volc_lat >= 0 else 32700 + zone_number
+    utm_crs = ccrs.epsg(epsg)
+    
+    x0, y0, x1, y1 = volc_area.area_extent  # (x_ll, y_ll, x_ur, y_ur)
+
+    fig, ax = plt.subplots(
+        figsize=(5.5, 3.5),
+        subplot_kw={"projection": ccrs.PlateCarree()}  # display in lat/lon
+    )
+    
+    # Clip the corners a bit to hide the rotation
+    inset = 900
+    ax.set_extent([x0 + inset, x1 - inset, y0 + inset, y1 - inset], crs=utm_crs)
+    
+    im = ax.imshow(
+        img,
+        origin="upper",
+        extent=[x0, x1, y0, y1],
+        transform=utm_crs,
+        interpolation="nearest",
+        vmin=-50,
+        vmax=50
+    )
+    
+    fig.colorbar(im, ax=ax, shrink=0.7, label="Brightness Temperature (ºC)")
+    
+    gl = ax.gridlines(draw_labels=True, linewidth=0.5, color="gray", alpha=0.7, linestyle="--")
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlocator = matplotlib.ticker.MaxNLocator(2)
+    gl.ylocator = matplotlib.ticker.MaxNLocator(2)    
+    
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+    ax.set_title(title)
 
     out = BytesIO()
     fig.savefig(out, format="png")
 
     out.seek(0)
     plt.close()
+    
     return out
 
 def post_mattermost(img, volcano_id, filename, meta):
@@ -252,9 +292,11 @@ def save_results(results, mapping):
             mir_data = row['MIRImage']
             mir_filename = f"{splitext(row['Data File'])[0]}_mir.png"
             mir_title = f"Middle Infrared\n{timestamp.strftime('%Y-%m-%d %H:%M')} UTC"
-            img_bytes = save_mir_image(mir_data, mir_title)
+            img_bytes = save_mir_image(mir_data, mir_title, row["Volcano ID"])
 
-            if row['Max Probability'] >= 0.5 and json.loads(row['Day/Night Flag'])['day_night'] == 'N':
+            ########### DEBUG: Remove #################
+            if True:
+            # if row['Max Probability'] >= 0.5 and json.loads(row['Day/Night Flag'])['day_night'] == 'N':
                 ############# DEBUG: Remove and uncomment ################
                 with open(f'/tmp/{mir_filename}', 'wb') as f:
                     img_bytes.seek(0)
