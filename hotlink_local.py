@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, UTC
 import hotlink
 import numpy
 import pandas
-import pyproj
 import utm
 
 from hotlink import support_functions
@@ -117,7 +116,7 @@ def match_viirs(mir_files: list | tuple, tir_files: list | tuple, geog_files: li
     df_merged = pandas.merge(df_merged, df_geog, how="inner", on="match_key")
     df_merged.rename(columns={"file": "file_3"}, inplace=True)
     df_merged["orbit"] = df_merged["file_1"].apply(lambda p: int(p.parent.name))
-    
+
 
     df_merged["start_time"], df_merged["end_time"] = zip(*df_merged["file_3"].map(viirs_start_end_from_name))
     df_merged = df_merged.sort_values(['start_time'], kind="stable").reset_index(drop=True)
@@ -130,8 +129,8 @@ def extract_datetime(filename: pathlib.PosixPath) -> str:
     time_part = parts[3][1:7]  # remove 't' and truncate to 6 digits
 
     return f"{date_part}T{time_part}"
-    
-    
+
+
 def resample(
     start_time: datetime,
     area: geometry.AreaDefinition,
@@ -165,10 +164,9 @@ def resample(
     datasets = ['I04','I05'] # VIIRS, mir/tir
 
     try:
-        ############ DEBUG. Uncomment#########
-        # if scn.start_time.replace(tzinfo=UTC) < start_time:
-            # raise AgeError
-                
+        if scn.start_time.replace(tzinfo=UTC) < start_time:
+            raise AgeError
+
         t1 = time.time()
         cropscn = scn.resample(
             destination=area,
@@ -200,13 +198,13 @@ def resample(
         if 'cropscn' in locals():
             cropscn.unload()
             del mir, tir, cropscn
-            
+
         gc.collect()
 
 def preprocess(
     start_time,
     vent,
-    scn, 
+    scn,
     sat,
     folder='./data',
     output=pathlib.Path('./Output')
