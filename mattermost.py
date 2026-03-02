@@ -1,4 +1,3 @@
-import urllib
 import mattermostdriver
 
 import config
@@ -11,7 +10,7 @@ def connect():
             "port": config.MATTERMOST_PORT,
         }
     )
-    
+
     mattermost.login()
     channel_id = mattermost.channels.get_channel_by_name_and_team_name(
         config.MATTERMOST_TEAM, config.MATTERMOST_CHANNEL
@@ -37,4 +36,5 @@ def mm_upload(mattermost, channel_id, message, image=None, img_name=None):
     if message:
         post_payload["message"] = message
 
-    mattermost.posts.create_post(post_payload)
+    msg_meta = mattermost.posts.create_post(post_payload)
+    return msg_meta
