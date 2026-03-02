@@ -463,11 +463,7 @@ def main():
             if db.exists(redis_key):
                 logging.info(f"Orbit {orbit} already processed. Skipping")
                 continue
-<<<<<<< HEAD
-            
-=======
 
->>>>>>> output-improvements
             if group.empty:
                 logging.info(f"No files to process for orbit {orbit}")
                 continue
@@ -499,39 +495,7 @@ def main():
             future_files = {}
 
             for loc in LOCATIONS:
-<<<<<<< HEAD
-                # Make sure we are using the canonical volcano.
-                volc_info = get_volc(loc)
-                elev = volc_info['elev']
-                volc_name = volc_info['name']
-    
-                datastream_mapping = get_datastream_mapping(volc_name)
-                if not datastream_mapping:
-                    logging.warning(f"WARNING: No datastreams found for {volc_name}")
-                    continue
-    
-                start_times = get_start(datastream_mapping)
-                try:
-                    start_time = start_times[viirs_id]
-                except KeyError:
-                    logging.warning(f"No VIIRS datastreams found for {volc_name}")
-                    continue
-                
-                logging.info(f"Found a start time of {start_time} for volcano {volc_name}")
-                
-                if start_time > orbit_date:
-                    logging.info(f"Orbit is older than newest data for {volc_name}. Skipping volc.")
-                    continue # This is old data for this volcano
-                
-                redis_keys = set(db.keys(f"{volc_name}:*"))
-                if f"{volc_name}:{orbit}" in redis_keys:
-                    logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
-                    continue
-                
-                logging.debug(f"Submitting {orbit} with time {orbit_date}")
-=======
                 logging.debug(f"Submitting {orbit} for {loc} with time {orbit_date}")
->>>>>>> output-improvements
                 future = executor.submit(
                     process_volc,
                     loc,
@@ -579,15 +543,10 @@ def main():
                         db.setex(f"{volc}:{orbit}", 129600, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
-<<<<<<< HEAD
-                    save_results(results, datastreams)
-                    
-=======
                     # Add the orbit number to the results
                     results['orbit'] = orbit
                     save_results(results, datastreams)
 
->>>>>>> output-improvements
                     saved_records += 1
                     logging.info(f"Saved results for {volc} - orbit {orbit}")
                 else:
