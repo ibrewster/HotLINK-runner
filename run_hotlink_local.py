@@ -231,7 +231,7 @@ def save_mir_image(img, title, volc):
     x0, y0, x1, y1 = volc_area.area_extent  # (x_ll, y_ll, x_ur, y_ur)
 
     fig, ax = plt.subplots(
-        figsize=(4, 4),
+        figsize=(5.3, 4),
         subplot_kw={"projection": utm_crs} # display in UTM
     )
 
@@ -280,9 +280,10 @@ def save_mir_image(img, title, volc):
 
     ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
     ax.set_title(title)
+    fig.tight_layout()
 
     out = BytesIO()
-    fig.savefig(out, format="png")
+    fig.savefig(out, format="png", bbox_inches='tight')
 
     out.seek(0)
     plt.close()
