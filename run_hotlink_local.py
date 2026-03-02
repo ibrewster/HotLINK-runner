@@ -407,7 +407,7 @@ def file_key(file):
     filename = pathlib.Path(file).name
     return "_".join(filename.split('_')[1:6])
 
-def process_volc(loc: str|list, orbit_date, orbit, db, scn_albers, sat):
+def process_volc(loc: str|list, orbit, db, scn_albers, sat):
     volc_info = get_volc(loc)
     elev = volc_info['elev']
     volc_name = volc_info['name']
@@ -448,7 +448,6 @@ def main():
 
             all_processed = True
             logging.info(f"Loading files for orbit {orbit}")
-            orbit_date = group['start_time'].min()
             file_list = list(
                 group[["file_1", "file_2", "file_3"]]
                 .stack()
@@ -473,11 +472,10 @@ def main():
             future_files = {}
 
             for loc in LOCATIONS:
-                logging.debug(f"Submitting {orbit} for {loc} with time {orbit_date}")
+                logging.debug(f"Submitting {orbit} for {loc}")
                 future = executor.submit(
                     process_volc,
                     loc,
-                    orbit_date,
                     orbit,
                     db,
                     scn_albers,
@@ -535,7 +533,7 @@ def main():
 
             if all_processed:
                 db.setex(redis_key, 129600, "1")
-            logging.info(f"All locations processed for orbit {orbit}, saved {saved_records} new records (out of {len(futures)} locations) since {orbit_date}")
+            logging.info(f"All locations processed for orbit {orbit}, saved {saved_records} new records (out of {len(futures)} locations)")
 
     logging.info(f"All orbits processed in {time.time()-t0}.")
     db.close()
