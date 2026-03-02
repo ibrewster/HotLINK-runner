@@ -31,7 +31,6 @@ import psycopg
 import redis
 import utm
 
-from cartopy.mpl.gridliner import LongitudeFormatter, LatitudeFormatter
 from pyproj import Transformer
 from pyresample.geometry import AreaDefinition
 from satpy import Scene
@@ -399,14 +398,8 @@ def load_file_list() -> pandas.DataFrame:
             files[files['type']=='GITCO']['path']
         )
 
-    # unexpected = set(file_types) - viirs_keys
-    # if unexpected:
-        # logging.warning(f"Warning: Found unexpected file types: {unexpected}")
-
     if df is None or df.empty:
         return sat, pandas.DataFrame()
-
-    # df['key'] = df.merge(files[['path', 'key']], left_on='file_1', right_on='path', how='left')['key']
 
     return sat, df
 
@@ -457,7 +450,7 @@ def main():
     area_def = AreaDefinition.from_epsg(3338, resolution=371)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        orbit_groups = files.groupby("orbit")
+        orbit_groups = files.groupby("orbit", sort=False)
         for orbit, group in orbit_groups:
             redis_key = f"processed:{orbit}"
             if db.exists(redis_key):
