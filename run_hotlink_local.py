@@ -408,8 +408,6 @@ def file_key(file):
     return "_".join(filename.split('_')[1:6])
 
 def process_volc(loc: str|list, orbit_date, orbit, db, scn_albers, sat):
-    viirs_id = DEVICE_ID_MAP['viirs']
-
     volc_info = get_volc(loc)
     elev = volc_info['elev']
     volc_name = volc_info['name']
@@ -419,25 +417,12 @@ def process_volc(loc: str|list, orbit_date, orbit, db, scn_albers, sat):
         logging.warning(f"WARNING: No datastreams found for {volc_name}")
         return None, volc_name, None  # caller checks for None
 
-    start_times = get_start(datastream_mapping)
-    try:
-        start_time = start_times[viirs_id]
-    except KeyError:
-        logging.warning(f"No VIIRS datastreams found for {volc_name}")
-        return None, volc_name, None
-
-    logging.info(f"Found a start time of {start_time} for volcano {volc_name}")
-
-
-    if start_time > orbit_date:
-        raise hotlink_local.AgeError(f"Latest saved data time of {start_time} is newer than orbit date of {orbit_date}")
-
     redis_keys = set(db.keys(f"{volc_name}:*"))
     if f"{volc_name}:{orbit}" in redis_keys:
         logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
         return None, volc_name, None
 
-    result = hotlink_local.get_results(start_time, loc, elev, scn_albers, sat)
+    result = hotlink_local.get_results(loc, elev, scn_albers, sat)
     return result, volc_name, datastream_mapping
 
 def main():

@@ -132,7 +132,6 @@ def extract_datetime(filename: pathlib.PosixPath) -> str:
 
 
 def resample(
-    start_time: datetime,
     area: geometry.AreaDefinition,
     scn: Scene,
     out_file: str,
@@ -164,9 +163,6 @@ def resample(
     datasets = ['I04','I05'] # VIIRS, mir/tir
 
     try:
-        if scn.start_time.replace(tzinfo=UTC) < start_time:
-            raise AgeError
-
         t1 = time.time()
         cropscn = scn.resample(
             destination=area,
@@ -202,7 +198,6 @@ def resample(
         gc.collect()
 
 def preprocess(
-    start_time,
     vent,
     scn,
     sat,
@@ -218,7 +213,7 @@ def preprocess(
 
     out_file =  _gen_output_name(dest, scn.start_time)
     try:
-        resample(start_time, area, scn, out_file)
+        resample(area, scn, out_file)
         meta = {
             out_file.name: {
                 'satelite': scn['I04'].attrs['platform_name'],
@@ -238,7 +233,6 @@ def preprocess(
 
 
 def get_results(
-    start_time: datetime,
     vent: str | tuple[float, float],
     elevation: int,
     scn: Scene,
@@ -352,7 +346,6 @@ def get_results(
 
     logging.info("Processing files...")
     download_meta = preprocess(
-        start_time,
         vent,
         scn,
         sensor,
