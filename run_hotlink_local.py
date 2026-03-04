@@ -3,6 +3,7 @@ import time
 import matplotlib
 import numpy
 import pyproj
+import requests
 
 matplotlib.use('Agg')
 
@@ -218,7 +219,7 @@ def get_start(datastreams):
 
     return latest_timestamps
 
-def save_mir_image(img, title, volc):
+def generate_mir_image(img, title, volc):
     # Convert img from Kelven to ºC
     img -= 273.15
 
@@ -319,7 +320,7 @@ def save_results(results, mapping):
             img_volc = VOLCS.loc[VOLCS['id']==row["Volcano ID"]].iloc[0]
             mir_filename = f"{img_volc['name']}-{splitext(row['Data File'])[0]}_mir.png"
             mir_title = f"{img_volc['name']} Middle Infrared\n{timestamp.strftime('%Y-%m-%d %H:%M')} UTC"
-            img_bytes = save_mir_image(mir_data, mir_title, img_volc)
+            img_bytes = generate_mir_image(mir_data, mir_title, img_volc)
 
             metadata = {"satellite": row["Satellite"], "sensor": row["Sensor"]}
 
@@ -327,8 +328,19 @@ def save_results(results, mapping):
                 msg_meta = post_mattermost(img_bytes, row['Volcano ID'], mir_filename, row)
                 msg_id = msg_meta['id']
                 metadata['mattermostid'] = msg_id
+                
+            # Upload the image to the PREEVENTS server
+            img_bytes.seek(0)
+            upload_resp = requests.post(
+                'https://preeventsdb.gi.alaska.edu/api/v1/uploads',
+                files={'file': (mir_filename, img_bytes, 'image/png')}, 
+                headers={'X-API-Key': config.PREEVENTS_UPLOAD_KEY}
+            )
+            if upload_resp.status_code == 200:
+                up_resp = upload_resp.json()
+                metadata['mir_img_id'] = up_resp['upload_id']
+                
             # Save the metadata record
-
             metadata_json = json.dumps(metadata)
             metadata_datastream = mapping.get(("Metadata", sensor))
             if metadata_datastream:
