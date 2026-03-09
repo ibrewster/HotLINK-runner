@@ -86,8 +86,8 @@ VARIABLE_ID_MAP = {
     "Solar Zenith": 6,
     "Solar Azimuth": 7,
     "Day/Night Flag":24,
-    "Metadata": 13,
-    # Metadata needs special handling (see below)
+    "Metadata": 13,    # Metadata needs special handling (see below)
+    "MIR Image": 1,
 }
 
 DEVICE_ID_MAP = {
@@ -303,18 +303,18 @@ def save_results(results, mapping):
                 msg_meta = post_mattermost(img_bytes, row['Volcano ID'], mir_filename, row)
                 msg_id = msg_meta['id']
                 metadata['mattermostid'] = msg_id
-                
+
             # Upload the image to the PREEVENTS server
             img_bytes.seek(0)
             upload_resp = requests.post(
                 'https://preeventsdb.gi.alaska.edu/api/v1/uploads',
-                files={'file': (mir_filename, img_bytes, 'image/png')}, 
-                headers={'X-API-Key': 'd7ee2c76137c60bfd4be5871165f2af239a2d11e42fca8a2d24bb30751cf7888'}
+                files={'file': (mir_filename, img_bytes, 'image/png')},
+                headers={'X-API-Key': config.PREEVENTS_UPLOAD_KEY}
             )
             if upload_resp.status_code == 200:
                 up_resp = upload_resp.json()
-                metadata['mir_img_id'] = up_resp['upload_id']
-                
+                row['MIR Image'] = up_resp['upload_id']
+
             # Save the metadata record
             metadata_json = json.dumps(metadata)
             metadata_datastream = mapping.get(("Metadata", sensor))

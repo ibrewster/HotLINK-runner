@@ -49,7 +49,7 @@ def get_channel_reactions():
     params = {'since': since_timestamp}
     mattermost, channel_id = connect()
     result = mattermost.posts.get_posts_for_channel(channel_id, params=params)
-    
+
     posts = result.get('posts', {})
     order = result.get('order', [])
     votes = {}
@@ -57,7 +57,7 @@ def get_channel_reactions():
     for post_id, post in posts.items():
         if post['user_id'] != config.MATTERMOST_USER_ID:
             continue
-        
+
         reactions = set()
         post_reactions = post.get('metadata', {}).get('reactions', [])
         if post_reactions:
@@ -69,21 +69,23 @@ def get_channel_reactions():
             preevents_id = find_preevents_record_id(post_id, from_search, to_search)
             # TODO: Decide what to do if we can't find this record in preevents
             preevents_records[post_id] = preevents_id
-                
+
             true_pos, source = interpret_rections(reactions)
             votes[post_id] = {
                 'TruePos': true_pos,
                 'Source': source,
             }
-    
+
     for post_id,vote in votes.items():
         print(post_id, vote)
-        
+
+    print("------------------------------")
+
     for post_id, pid in preevents_records.items():
         print(post_id, pid)
-            
-    
-def find_preevents_record_id(post_id, dfrom, dto):    
+
+
+def find_preevents_record_id(post_id, dfrom, dto):
     SQL ="""
     SELECT datavalue_id
     FROM datavalues
@@ -99,7 +101,7 @@ def find_preevents_record_id(post_id, dfrom, dto):
         result = cursor.fetchone()
     if result:
         return result[0]
-    
+
 
 if __name__ == "__main__":
     get_channel_reactions()
