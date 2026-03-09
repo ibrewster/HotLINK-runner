@@ -1,6 +1,9 @@
+from datetime import datetime, timedelta
+
 import mattermostdriver
 
 import config
+from utils import preevents_cursor, interpret_rections
 
 def connect():
     mattermost = mattermostdriver.Driver(
@@ -38,3 +41,65 @@ def mm_upload(mattermost, channel_id, message, image=None, img_name=None):
 
     msg_meta = mattermost.posts.create_post(post_payload)
     return msg_meta
+
+def get_channel_reactions():
+    # TODO: Figure out how to do the filtering
+    START_DATE = "2026-02-01 00:00:00"
+    since_timestamp = int(datetime.strptime(START_DATE, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
+    params = {'since': since_timestamp}
+    mattermost, channel_id = connect()
+    result = mattermost.posts.get_posts_for_channel(channel_id, params=params)
+    
+    posts = result.get('posts', {})
+    order = result.get('order', [])
+    votes = {}
+    preevents_records = {}
+    for post_id, post in posts.items():
+        if post['user_id'] != config.MATTERMOST_USER_ID:
+            continue
+        
+        reactions = set()
+        post_reactions = post.get('metadata', {}).get('reactions', [])
+        if post_reactions:
+            for reaction in post_reactions:
+                reactions.add(reaction['emoji_name'])
+            post_creation = datetime.fromtimestamp(post['create_at'] / 1000)
+            from_search = post_creation - timedelta(days=1)
+            to_search = post_creation + timedelta(days=1)
+            preevents_id = find_preevents_record_id(post_id, from_search, to_search)
+            # TODO: Decide what to do if we can't find this record in preevents
+            preevents_records[post_id] = preevents_id
+                
+            true_pos, source = interpret_rections(reactions)
+            votes[post_id] = {
+                'TruePos': true_pos,
+                'Source': source,
+            }
+    
+    for post_id,vote in votes.items():
+        print(post_id, vote)
+        
+    for post_id, pid in preevents_records.items():
+        print(post_id, pid)
+            
+    
+def find_preevents_record_id(post_id, dfrom, dto):    
+    SQL ="""
+    SELECT datavalue_id
+    FROM datavalues
+    WHERE categoryvalue->>'mattermostid'=%s
+        AND datastream_id in (SELECT datastream_id
+            FROM datastreams
+            WHERE variable_id=13
+            AND device_id=1)
+        AND timestamp>=%s AND timestamp<%s;
+    """
+    with preevents_cursor() as cursor:
+        cursor.execute(SQL, (post_id, dfrom, dto))
+        result = cursor.fetchone()
+    if result:
+        return result[0]
+    
+
+if __name__ == "__main__":
+    get_channel_reactions()
