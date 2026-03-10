@@ -67,10 +67,15 @@ def get_channel_reactions():
             from_search = post_creation - timedelta(days=1)
             to_search = post_creation + timedelta(days=1)
             preevents_id = find_preevents_record_id(post_id, from_search, to_search)
-            # TODO: Decide what to do if we can't find this record in preevents
+            if not preevents_id:
+                print("No preevents record found for record. Skipping.")
+                continue
+
             preevents_records[post_id] = preevents_id
 
             true_pos, source = interpret_rections(reactions)
+            save_reactions(preevents_id, true_pos, source)
+
             votes[post_id] = {
                 'TruePos': true_pos,
                 'Source': source,
@@ -101,6 +106,21 @@ def find_preevents_record_id(post_id, dfrom, dto):
         result = cursor.fetchone()
     if result:
         return result[0]
+
+def save_reactions(record_id, true_pos, source):
+    print(f"Updating record {record_id} with values {true_pos}, {source}")
+    with preevents_cursor(readonly = False, autocommit = True) as cursor:
+        cursor.execute(
+            """
+            UPDATE datavalues
+            SET categoryvalue = categoryvalue || jsonb_build_object(
+                'true_positive', %s::boolean,
+                'hotspot_source', %s::text
+            )
+            WHERE datavalue_id = %s
+            """,
+            (true_pos, source, record_id)
+        )
 
 
 if __name__ == "__main__":
