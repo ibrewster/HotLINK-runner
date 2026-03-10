@@ -57,7 +57,6 @@ def get_channel_reactions():
     result = mattermost.posts.get_posts_for_channel(channel_id, params=params)
 
     posts = result.get('posts', {})
-    order = result.get('order', [])
     votes = {}
     preevents_records = {}
     for post_id, post in posts.items():
