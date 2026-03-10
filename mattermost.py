@@ -78,7 +78,7 @@ def get_channel_reactions():
             preevents_records[post_id] = preevents_id
 
             true_pos, source = interpret_rections(reactions)
-            save_reactions(preevents_id, true_pos, source)
+            save_reactions(*preevents_id, true_pos, source)
 
             votes[post_id] = {
                 'TruePos': true_pos,
@@ -90,7 +90,7 @@ def get_channel_reactions():
 
 def find_preevents_record_id(post_id, dfrom, dto):
     SQL ="""
-    SELECT datavalue_id
+    SELECT datavalue_id, timestamp
     FROM datavalues
     WHERE categoryvalue->>'mattermostid'=%s
         AND datastream_id in (SELECT datastream_id
@@ -103,9 +103,9 @@ def find_preevents_record_id(post_id, dfrom, dto):
         cursor.execute(SQL, (post_id, dfrom, dto))
         result = cursor.fetchone()
     if result:
-        return result[0]
+        return result
 
-def save_reactions(record_id, true_pos, source):
+def save_reactions(record_id, timestamp, true_pos, source):
     print(f"Updating record {record_id} with values {true_pos}, {source}")
     with preevents_cursor(readonly = False, autocommit = True) as cursor:
         cursor.execute(
@@ -115,9 +115,9 @@ def save_reactions(record_id, true_pos, source):
                 'true_positive', %s::boolean,
                 'hotspot_source', %s::text
             )
-            WHERE datavalue_id = %s
+            WHERE datavalue_id = %s AND timestamp=%s
             """,
-            (true_pos, source, record_id)
+            (true_pos, source, record_id, timestamp)
         )
 
 
