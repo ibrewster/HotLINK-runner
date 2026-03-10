@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import mattermostdriver
 
 import config
-from utils import preevents_cursor, interpret_rections
+from utils import preevents_cursor, interpret_rections, REDIS_DB
 
 def connect():
     mattermost = mattermostdriver.Driver(
@@ -44,8 +44,14 @@ def mm_upload(mattermost, channel_id, message, image=None, img_name=None):
 
 def get_channel_reactions():
     # TODO: Figure out how to do the filtering
-    START_DATE = "2026-02-01 00:00:00"
-    since_timestamp = int(datetime.strptime(START_DATE, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
+    now = datetime.now(timezone.utc).isoformat()
+    last_run = REDIS_DB.get('reactionLastRun') or now
+    last_run = datetime.fromisoformat(last_run)
+
+    START_DATE = last_run - timedelta(days = 7)
+    print(f"Processing mattermost posts since {START_DATE}")
+
+    since_timestamp = int(START_DATE.timestamp() * 1000)
     params = {'since': since_timestamp}
     mattermost, channel_id = connect()
     result = mattermost.posts.get_posts_for_channel(channel_id, params=params)
@@ -68,7 +74,6 @@ def get_channel_reactions():
             to_search = post_creation + timedelta(days=1)
             preevents_id = find_preevents_record_id(post_id, from_search, to_search)
             if not preevents_id:
-                print("No preevents record found for record. Skipping.")
                 continue
 
             preevents_records[post_id] = preevents_id
@@ -81,13 +86,7 @@ def get_channel_reactions():
                 'Source': source,
             }
 
-    for post_id,vote in votes.items():
-        print(post_id, vote)
-
-    print("------------------------------")
-
-    for post_id, pid in preevents_records.items():
-        print(post_id, pid)
+    REDIS_DB.set('reactionLastRun', now)
 
 
 def find_preevents_record_id(post_id, dfrom, dto):

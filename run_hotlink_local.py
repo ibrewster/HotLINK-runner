@@ -2,7 +2,6 @@ import time
 
 import matplotlib
 import numpy
-import pyproj
 import requests
 
 matplotlib.use('Agg')
@@ -28,7 +27,6 @@ import cartopy.feature as cfeature
 
 import pandas
 import psycopg
-import redis
 import utm
 
 from pyproj import Transformer
@@ -43,7 +41,7 @@ import matplotlib.pyplot as plt
 import config
 import hotlink_local
 import mattermost
-from utils import preevents_cursor
+from utils import preevents_cursor, REDIS_DB
 
 ########## CONSTANTS #########
 
@@ -419,14 +417,13 @@ def main():
     sat, files = load_file_list()
     logging.info(f"Found {len(files)} fileset(s) of type {sat} to process")
 
-    db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
     area_def = AreaDefinition.from_epsg(3338, resolution=371)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         orbit_groups = files.groupby("orbit", sort=False)
         for orbit, group in orbit_groups:
             redis_key = f"processed:{orbit}"
-            if db.exists(redis_key):
+            if REDIS_DB.exists(redis_key):
                 logging.info(f"Orbit {orbit} already processed. Skipping")
                 continue
 
@@ -465,7 +462,7 @@ def main():
                     process_volc,
                     loc,
                     orbit,
-                    db,
+                    REDIS_DB,
                     scn_albers,
                     sat
                 )
@@ -504,7 +501,7 @@ def main():
                     # Mark this file as having been attempted, so we don't try it again
                     exc_type, _, _ = sys.exc_info()
                     if exc_type is None and mark_processed:
-                        db.setex(f"{volc}:{orbit}", 129600, "1")
+                        REDIS_DB.setex(f"{volc}:{orbit}", 129600, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
                     # Add the orbit number to the results
@@ -520,11 +517,11 @@ def main():
                 logging.info("----------------------------------")
 
             if all_processed:
-                db.setex(redis_key, 129600, "1")
+                REDIS_DB.setex(redis_key, 129600, "1")
             logging.info(f"All locations processed for orbit {orbit}, saved {saved_records} new records (out of {len(futures)} locations)")
 
     logging.info(f"All orbits processed in {time.time()-t0}.")
-    db.close()
+    REDIS_DB.close()
 
 if __name__ == "__main__":
     main()
