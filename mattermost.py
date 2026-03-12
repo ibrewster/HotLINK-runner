@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import mattermostdriver
 
 import config
-from utils import preevents_cursor, interpret_rections
+from utils import preevents_cursor, interpret_rections, REDIS_DB
 
 def connect():
     mattermost = mattermostdriver.Driver(
@@ -44,20 +44,25 @@ def mm_upload(mattermost, channel_id, message, image=None, img_name=None):
 
 def get_channel_reactions():
     # TODO: Figure out how to do the filtering
-    START_DATE = "2026-02-01 00:00:00"
-    since_timestamp = int(datetime.strptime(START_DATE, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
+    now = datetime.now(timezone.utc).isoformat()
+    last_run = REDIS_DB.get('reactionLastRun') or now
+    last_run = datetime.fromisoformat(last_run)
+
+    START_DATE = last_run - timedelta(days = 7)
+    print(f"Processing mattermost posts since {START_DATE}")
+
+    since_timestamp = int(START_DATE.timestamp() * 1000)
     params = {'since': since_timestamp}
     mattermost, channel_id = connect()
     result = mattermost.posts.get_posts_for_channel(channel_id, params=params)
-    
+
     posts = result.get('posts', {})
-    order = result.get('order', [])
     votes = {}
     preevents_records = {}
     for post_id, post in posts.items():
         if post['user_id'] != config.MATTERMOST_USER_ID:
             continue
-        
+
         reactions = set()
         post_reactions = post.get('metadata', {}).get('reactions', [])
         if post_reactions:
@@ -67,25 +72,25 @@ def get_channel_reactions():
             from_search = post_creation - timedelta(days=1)
             to_search = post_creation + timedelta(days=1)
             preevents_id = find_preevents_record_id(post_id, from_search, to_search)
-            # TODO: Decide what to do if we can't find this record in preevents
+            if not preevents_id:
+                continue
+
             preevents_records[post_id] = preevents_id
-                
+
             true_pos, source = interpret_rections(reactions)
+            save_reactions(*preevents_id, true_pos, source)
+
             votes[post_id] = {
                 'TruePos': true_pos,
                 'Source': source,
             }
-    
-    for post_id,vote in votes.items():
-        print(post_id, vote)
-        
-    for post_id, pid in preevents_records.items():
-        print(post_id, pid)
-            
-    
-def find_preevents_record_id(post_id, dfrom, dto):    
+
+    REDIS_DB.set('reactionLastRun', now)
+
+
+def find_preevents_record_id(post_id, dfrom, dto):
     SQL ="""
-    SELECT datavalue_id
+    SELECT datavalue_id, timestamp
     FROM datavalues
     WHERE categoryvalue->>'mattermostid'=%s
         AND datastream_id in (SELECT datastream_id
@@ -98,8 +103,23 @@ def find_preevents_record_id(post_id, dfrom, dto):
         cursor.execute(SQL, (post_id, dfrom, dto))
         result = cursor.fetchone()
     if result:
-        return result[0]
-    
+        return result
+
+def save_reactions(record_id, timestamp, true_pos, source):
+    print(f"Updating record {record_id} with values {true_pos}, {source}")
+    with preevents_cursor(readonly = False, autocommit = True) as cursor:
+        cursor.execute(
+            """
+            UPDATE datavalues
+            SET categoryvalue = categoryvalue || jsonb_build_object(
+                'true_positive', %s::boolean,
+                'hotspot_source', %s::text
+            )
+            WHERE datavalue_id = %s AND timestamp=%s
+            """,
+            (true_pos, source, record_id, timestamp)
+        )
+
 
 if __name__ == "__main__":
     get_channel_reactions()

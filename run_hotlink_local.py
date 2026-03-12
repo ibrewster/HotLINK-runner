@@ -2,7 +2,6 @@ import time
 
 import matplotlib
 import numpy
-import pyproj
 import requests
 
 matplotlib.use('Agg')
@@ -28,7 +27,6 @@ import cartopy.feature as cfeature
 
 import pandas
 import psycopg
-import redis
 import utm
 
 from pyproj import Transformer, CRS
@@ -44,7 +42,7 @@ import matplotlib.pyplot as plt
 import config
 import hotlink_local
 import mattermost
-from utils import preevents_cursor
+from utils import preevents_cursor, REDIS_DB
 
 ########## CONSTANTS #########
 
@@ -87,8 +85,8 @@ VARIABLE_ID_MAP = {
     "Solar Zenith": 6,
     "Solar Azimuth": 7,
     "Day/Night Flag":24,
-    "Metadata": 13,
-    # Metadata needs special handling (see below)
+    "Metadata": 13,    # Metadata needs special handling (see below)
+    "MIR Image": 1,
 }
 
 DEVICE_ID_MAP = {
@@ -304,18 +302,18 @@ def save_results(results, mapping):
                 msg_meta = post_mattermost(img_bytes, row['Volcano ID'], mir_filename, row)
                 msg_id = msg_meta['id']
                 metadata['mattermostid'] = msg_id
-                
+
             # Upload the image to the PREEVENTS server
             img_bytes.seek(0)
             upload_resp = requests.post(
                 'https://preeventsdb.gi.alaska.edu/api/v1/uploads',
-                files={'file': (mir_filename, img_bytes, 'image/png')}, 
-                headers={'X-API-Key': 'd7ee2c76137c60bfd4be5871165f2af239a2d11e42fca8a2d24bb30751cf7888'}
+                files={'file': (mir_filename, img_bytes, 'image/png')},
+                headers={'X-API-Key': config.PREEVENTS_UPLOAD_KEY}
             )
             if upload_resp.status_code == 200:
                 up_resp = upload_resp.json()
-                metadata['mir_img_id'] = up_resp['upload_id']
-                
+                row['MIR Image'] = up_resp['upload_id']
+
             # Save the metadata record
             metadata_json = json.dumps(metadata)
             metadata_datastream = mapping.get(("Metadata", sensor))
@@ -532,8 +530,6 @@ def main():
     logging.info("Beginning processing")
     sat, files = load_file_list()
     logging.info(f"Found {len(files)} fileset(s) of type {sat} to process")
-
-    db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
     
     # Create an area definition covering "Alaska"
     crs = CRS.from_proj4(
@@ -564,7 +560,7 @@ def main():
         orbit_groups = files.groupby("orbit", sort=False)
         for orbit, group in orbit_groups:
             redis_key = f"processed:{orbit}"
-            if db.exists(redis_key):
+            if REDIS_DB.exists(redis_key):
                 logging.info(f"Orbit {orbit} already processed. Skipping")
                 continue
 
@@ -603,7 +599,7 @@ def main():
                     process_volc,
                     loc,
                     orbit,
-                    db,
+                    REDIS_DB,
                     scn_albers,
                     sat
                 )
@@ -642,7 +638,7 @@ def main():
                     # Mark this file as having been attempted, so we don't try it again
                     exc_type, _, _ = sys.exc_info()
                     if exc_type is None and mark_processed:
-                        db.setex(f"{volc}:{orbit}", 129600, "1")
+                        REDIS_DB.setex(f"{volc}:{orbit}", 129600, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
                     # Add the orbit number to the results
@@ -658,11 +654,11 @@ def main():
                 logging.info("----------------------------------")
 
             if all_processed:
-                db.setex(redis_key, 129600, "1")
+                REDIS_DB.setex(redis_key, 129600, "1")
             logging.info(f"All locations processed for orbit {orbit}, saved {saved_records} new records (out of {len(futures)} locations)")
 
     logging.info(f"All orbits processed in {time.time()-t0}.")
-    db.close()
+    REDIS_DB.close()
 
 if __name__ == "__main__":
     main()

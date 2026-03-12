@@ -3,6 +3,10 @@ from contextlib import contextmanager
 import config
 
 import psycopg
+import redis
+
+REDIS_DB = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+
 
 @contextmanager
 def db_cursor(host, user, password, dbname=config.db_name, port=5432, autocommit=False):
@@ -35,7 +39,7 @@ def preevents_cursor(readonly=True, autocommit=False):
 def interpret_rections(signals: set[str]):
     # Early exits / special cases
     if not signals:
-        return None, None    
+        return None, None
     if '-1' in signals:
         return False, None
     if 'question' in signals:
