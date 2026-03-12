@@ -177,7 +177,7 @@ def resample(
         total_pixels = mir.size
         valid_pixels = (~numpy.isnan(mir)).sum()
         coverage = (valid_pixels / total_pixels) * 100
-        if coverage < .8:
+        if coverage < 80:
             raise CoverageError(f"Coverage: {coverage}")
 
         # Fill missing values
@@ -197,6 +197,11 @@ def resample(
 
         gc.collect()
 
+def test_img(img):
+    import matplotlib.pyplot as plt
+    plt.imshow(img)
+    plt.savefig('/Users/israel/Downloads/test.png')
+    
 def preprocess(
     vent,
     scn,

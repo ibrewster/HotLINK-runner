@@ -31,7 +31,8 @@ import psycopg
 import redis
 import utm
 
-from pyproj import Transformer
+from pyproj import Transformer, CRS
+from pyresample import create_area_def
 from pyresample.geometry import AreaDefinition
 from satpy import Scene
 
@@ -413,6 +414,119 @@ def process_volc(loc: str|list, orbit, db, scn_albers, sat):
     result = hotlink_local.get_results(loc, elev, scn_albers, sat)
     return result, volc_name, datastream_mapping
 
+
+def debug_dump_swath(scn, output_path="debug_i04_swath.png"):
+    i04 = scn["I04"]
+    data = i04.values
+
+    # Lon/lat live on the swath geometry, not as xarray coords
+    swath_def = i04.attrs["area"]
+    import dask.array
+
+    lons, lats = swath_def.get_lonlats()
+    lons = dask.array.Array.compute(lons)
+    lats = dask.array.Array.compute(lats)
+
+    fig, ax = plt.subplots(
+        figsize=(12, 10),
+        subplot_kw={"projection": ccrs.AlbersEqualArea(
+            central_longitude=-154,
+            central_latitude=50,
+            standard_parallels=(55, 65),
+        )}
+    )
+
+    vmin, vmax = numpy.nanpercentile(data, [2, 98])
+
+    ax.pcolormesh(
+        lons, lats, data,
+        transform=ccrs.PlateCarree(),
+        cmap="inferno",
+        vmin=vmin,
+        vmax=vmax,
+        shading="auto",
+    )
+
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+    ax.add_feature(cfeature.BORDERS, linewidth=0.5, linestyle=":")
+    ax.add_feature(cfeature.STATES, linewidth=0.3, edgecolor="gray")
+    ax.gridlines(draw_labels=True, linewidth=0.4, linestyle="--", color="gray")
+
+    ax.set_global()
+
+    lat_min, lat_max = numpy.nanmin(lats), numpy.nanmax(lats)
+    lon_min, lon_max = numpy.nanmin(lons), numpy.nanmax(lons)
+
+    print(f"lat range: {lat_min:.2f} to {lat_max:.2f}")
+    print(f"lon range: {lon_min:.2f} to {lon_max:.2f}")
+
+    ax.set_title(
+        f"I04 swath extent (pre-resample)\n"
+        f"lat [{lat_min:.2f} → {lat_max:.2f}]  lon [{lon_min:.2f} → {lon_max:.2f}]"
+    )
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {output_path}")
+    
+    
+def debug_dump_i04(scn_albers, area_def, output_path="debug_i04.png"):
+    """
+    Dump the I04 (MIR) band from an Albers-resampled satpy scene to an image.
+    """
+    i04 = scn_albers["I04"]
+    data = i04.values  # numpy array, may contain NaNs
+    
+    # Grab the projection from the area_def
+    proj_dict = area_def.proj_dict
+    crs = ccrs.AlbersEqualArea(
+        central_longitude=proj_dict.get("lon_0", 0),
+        central_latitude=proj_dict.get("lat_0", 0),
+        standard_parallels=(
+            proj_dict.get("lat_1", 29.5),
+            proj_dict.get("lat_2", 45.5),
+        )
+    )
+    
+    # Area extent in projection coordinates
+    extent = [
+        area_def.area_extent[0],  # x_min
+        area_def.area_extent[2],  # x_max
+        area_def.area_extent[1],  # y_min
+        area_def.area_extent[3],  # y_max
+    ]
+    
+    fig, ax = plt.subplots(
+        figsize=(10, 8),
+        subplot_kw={"projection": crs}
+    )
+    
+    # Plot with a fire-appropriate colormap; clip to reasonable radiance range
+    vmin, vmax = numpy.nanpercentile(data, [2, 98])
+    im = ax.imshow(
+        data,
+        origin="upper",
+        extent=extent,
+        transform=crs,
+        cmap="inferno",
+        vmin=vmin,
+        vmax=vmax,
+    )
+    
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+    ax.add_feature(cfeature.BORDERS, linewidth=0.5, linestyle=":")
+    ax.add_feature(cfeature.STATES, linewidth=0.3, edgecolor="gray")
+    
+    plt.colorbar(im, ax=ax, label="Radiance (W·m⁻²·sr⁻¹·μm⁻¹)", shrink=0.7)
+    ax.set_title(f"I04 MIR Band — orbit debug dump\n"
+                 f"shape: {data.shape}  |  valid px: {numpy.sum(~numpy.isnan(data)):,}")
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved debug image → {output_path}")
+
 def main():
     t0 = time.time()
     logging.info("Beginning processing")
@@ -420,7 +534,31 @@ def main():
     logging.info(f"Found {len(files)} fileset(s) of type {sat} to process")
 
     db = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-    area_def = AreaDefinition.from_epsg(3338, resolution=371)
+    
+    # Create an area definition covering "Alaska"
+    crs = CRS.from_proj4(
+        "+proj=aea +lat_0=50 +lon_0=-154 +lat_1=55 +lat_2=65 +datum=NAD83 +units=m"
+    )
+    transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+    corners = [
+        (172.0, 50.0),   # SW — far western Aleutians
+        (172.0, 60.0),   # NW
+        (-129.0, 50.0),  # SE — Alaska panhandle
+        (-129.0, 60.0),  # NE
+    ]
+    xs, ys = transformer.transform(
+        [c[0] for c in corners],
+        [c[1] for c in corners],
+    )
+
+    area_def = create_area_def(
+        "alaska_albers_operational",
+        crs,
+        area_extent=[min(xs), min(ys), max(xs), max(ys)],
+        resolution=371,
+        units="m",
+    )
+    # area_def = AreaDefinition.from_epsg(3338, resolution=371)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         orbit_groups = files.groupby("orbit", sort=False)
