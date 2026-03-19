@@ -193,9 +193,12 @@ def get_start(datastreams):
 
     return latest_timestamps
 
-def generate_mir_image(img, title, volc):
+def generate_mir_image(img, title, volc, hotspot_mask):
     # Convert img from Kelven to ºC
     img -= 273.15
+    
+ #   img = support_functions.rescale(img, 10, order=0)
+ #   hotspot_mask = support_functions.rescale(hotspot_mask, 10, order=0)
 
     volc_lon, volc_lat =  volc[['lon', 'lat']]
     volc_area: AreaDefinition = area_definition(volc['id'], (volc_lat, volc_lon), 'viirs')
@@ -223,7 +226,29 @@ def generate_mir_image(img, title, volc):
     )
 
     fig.colorbar(im, ax=ax, shrink=0.7, label="Brightness Temperature (ºC)")
+    
+    contours = support_functions.find_contours(hotspot_mask, level=0.5)
+    height, width = hotspot_mask.shape
+    img_height, img_width = img.shape[:2]
+    # Pixel offset of the mask's top-left corner within the image
+    row_offset = (img_height - height) // 2
+    col_offset = (img_width - width) // 2    
+    
+    for contour in contours:
+        rows = contour[:, 0] + row_offset
+        cols = contour[:, 1] + col_offset
 
+        utm_x = x0 + (cols / (img_width - 1)) * (x1 - x0)
+        utm_y = y1 + (rows / (img_height - 1)) * (y0 - y1)
+
+        ax.plot(
+            utm_x,
+            utm_y,
+            linewidth=1,
+            color="red",
+            transform=utm_crs,  # tell cartopy these are UTM coords
+        )
+        
     # Transformer to convert UTM ticks to lat/lon for labels
     transformer = Transformer.from_crs(utm_crs, "EPSG:4326", always_xy=True)
     volc_x, volc_y = transformer.transform(
@@ -294,7 +319,7 @@ def save_results(results, mapping):
             img_volc = VOLCS.loc[VOLCS['id']==row["Volcano ID"]].iloc[0]
             mir_filename = f"{img_volc['name']}-{splitext(row['Data File'])[0]}_mir.png"
             mir_title = f"{img_volc['name']} Middle Infrared\n{timestamp.strftime('%Y-%m-%d %H:%M')} UTC"
-            img_bytes = generate_mir_image(mir_data, mir_title, img_volc)
+            img_bytes = generate_mir_image(mir_data, mir_title, img_volc, row['Hotspot Mask'])
 
             metadata = {"satellite": row["Satellite"], "sensor": row["Sensor"]}
 

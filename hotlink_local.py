@@ -502,6 +502,7 @@ def get_results(
         result['Day/Night Flag'] = day_night
         result['Solar Zenith'] = round(sol_zenith, 1)
         result['Solar Azimuth'] = round(sol_azimuth, 1)
+        result['Hotspot Mask'] = hotspot_mask
 
         process_progress.update()
         return result
