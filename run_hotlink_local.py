@@ -47,6 +47,10 @@ from utils import preevents_cursor, REDIS_DB
 ########## CONSTANTS #########
 
 LOCATIONS = [
+    'Iliamna',
+    'Aniakchak',
+    'Mageik',
+    'Trident',
     'Korovin',
     'Martin',
     'Amukta',
@@ -196,7 +200,7 @@ def get_start(datastreams):
 def generate_mir_image(img, title, volc, hotspot_mask):
     # Convert img from Kelven to ºC
     img -= 273.15
-    
+
     img = support_functions.rescale(img, 10, order=0)
     hotspot_mask = support_functions.rescale(hotspot_mask, 10, order=0)
 
@@ -208,79 +212,97 @@ def generate_mir_image(img, title, volc, hotspot_mask):
 
     x0, y0, x1, y1 = volc_area.area_extent  # (x_ll, y_ll, x_ur, y_ur)
 
-    fig, ax = plt.subplots(
-        figsize=(5.3, 4),
+    has_hotspot = hotspot_mask.any()
+
+    ncols = 2 if has_hotspot else 1
+    fig, axes = plt.subplots(
+        1, ncols,
+        figsize=(5.3*ncols, 4),
         subplot_kw={"projection": utm_crs} # display in UTM
     )
+    if not has_hotspot:
+        axes = [axes]  # normalise to list for uniform access below
 
-    ax.set_extent([x0, x1, y0, y1], crs=utm_crs)
+    def setup_axis(ax, ex0, ex1, ey0, ey1):
+        ax.set_extent([ex0, ex1, ey0, ey1], crs=utm_crs)
+        im = ax.imshow(
+            img,
+            origin="upper",
+            extent=[x0, x1, y0, y1],   # always the full image
+            transform=utm_crs,
+            interpolation="nearest",
+            vmin=-50,
+            vmax=50
+        )
+        return im
 
-    im = ax.imshow(
-        img,
-        origin="upper",
-        extent=[x0, x1, y0, y1],
-        transform=utm_crs,
-        interpolation="nearest",
-        vmin=-50,
-        vmax=50
-    )
+    transformer = Transformer.from_crs(utm_crs, "EPSG:4326", always_xy=True)
 
-    fig.colorbar(im, ax=ax, shrink=0.7, label="Brightness Temperature (ºC)")
-    
-    if hotspot_mask.any():            
-        contours = support_functions.find_contours(hotspot_mask, level=0.5)
-        height, width = hotspot_mask.shape
+    def set_latlon_ticks(ax, ex0, ex1, ey0, ey1, centre_lon, centre_lat):
+        cx, cy = transformer.transform(centre_lon, centre_lat, direction='INVERSE')
+        x_ticks = numpy.linspace(ex0, ex1, 3)
+        y_ticks = numpy.linspace(ey0, ey1, 3)
+        x_ticks[1] = cx
+        y_ticks[1] = cy
+
+        mid_y = (ey0 + ey1) / 2
+        mid_x = (ex0 + ex1) / 2
+        x_lons = [transformer.transform(x, mid_y)[0] for x in x_ticks]
+        y_lats = [transformer.transform(mid_x, y)[1] for y in y_ticks]
+        x_lons[1] = centre_lon
+        y_lats[1] = centre_lat
+
+        ax.set_xticks(x_ticks)
+        ax.set_yticks(y_ticks)
+        ax.set_xticklabels([f"{lon:.3f}°E" for lon in x_lons])
+        ax.set_yticklabels([f"{lat:.3f}°N" for lat in y_lats])
+
+    ax0 = axes[0]
+    im0 = setup_axis(ax0, x0, x1, y0, y1)
+    fig.colorbar(im0, ax=ax0, shrink=0.7, label="Brightness Temperature (ºC)")
+    set_latlon_ticks(ax0, x0, x1, y0, y1, volc_lon, volc_lat)
+    ax0.add_feature(cfeature.COASTLINE, linewidth=0.8)
+    ax0.set_title(title)
+
+    if has_hotspot:
+
+        ax1 = axes[1]
         img_height, img_width = img.shape[:2]
-        # Pixel offset of the mask's top-left corner within the image
-        row_offset = (img_height - height) // 2
-        col_offset = (img_width - width) // 2    
-        
+        mask_height, mask_width = hotspot_mask.shape
+
+        row_offset = (img_height - mask_height) // 2
+        col_offset = (img_width - mask_width) // 2
+
+        # UTM extent of the zoomed (mask-sized) region
+        zx0 = x0 + (col_offset / (img_width - 1)) * (x1 - x0)
+        zx1 = x0 + ((col_offset + mask_width - 1) / (img_width - 1)) * (x1 - x0)
+        zy1 = y1 + (row_offset / (img_height - 1)) * (y0 - y1)
+        zy0 = y1 + ((row_offset + mask_height - 1) / (img_height - 1)) * (y0 - y1)
+
+        im1 = setup_axis(ax1, zx0, zx1, zy0, zy1)
+        fig.colorbar(im1, ax=ax1, shrink=0.7, label="Brightness Temperature (ºC)")
+
+        contours = support_functions.find_contours(hotspot_mask, level=0.5)
+
         for contour in contours:
             rows = contour[:, 0] + row_offset
             cols = contour[:, 1] + col_offset
-    
+
             utm_x = x0 + (cols / (img_width - 1)) * (x1 - x0)
             utm_y = y1 + (rows / (img_height - 1)) * (y0 - y1)
-    
-            ax.plot(
+
+            ax1.plot(
                 utm_x,
                 utm_y,
                 linewidth=1,
                 color="red",
                 transform=utm_crs,  # tell cartopy these are UTM coords
             )
-        
-    # Transformer to convert UTM ticks to lat/lon for labels
-    transformer = Transformer.from_crs(utm_crs, "EPSG:4326", always_xy=True)
-    volc_x, volc_y = transformer.transform(
-        volc_lon,
-        volc_lat,
-        direction = 'INVERSE'
-    )
 
-    x_ticks = numpy.linspace(x0, x1, 3)
-    y_ticks = numpy.linspace(y0, y1, 3)
+        set_latlon_ticks(ax1, zx0, zx1, zy0, zy1, volc_lon, volc_lat)
+        ax1.add_feature(cfeature.COASTLINE, linewidth=0.8)
+        ax1.set_title(f"{title} — hotspot detail")
 
-    x_ticks[1] = volc_x
-    y_ticks[1] = volc_y
-
-    ax.set_xticks(x_ticks)
-    ax.set_yticks(y_ticks)
-
-    # For x labels: convert each (x, mid_y) to lon
-    mid_y = (y0 + y1) / 2
-    x_lons = [transformer.transform(x, mid_y)[0] for x in x_ticks]
-    x_lons[1] = volc_lon
-    ax.set_xticklabels([f"{lon:.3f}°E" for lon in x_lons])
-
-    # For y labels: convert each (mid_x, y) to lat
-    mid_x = (x0 + x1) / 2
-    y_lats = [transformer.transform(mid_x, y)[1] for y in y_ticks]
-    y_lats[1] = volc_lat
-    ax.set_yticklabels([f"{lat:.3f}°N" for lat in y_lats])
-
-    ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
-    ax.set_title(title)
     fig.tight_layout()
 
     out = BytesIO()
@@ -493,15 +515,15 @@ def debug_dump_swath(scn, output_path="debug_i04_swath.png"):
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {output_path}")
-    
-    
+
+
 def debug_dump_i04(scn_albers, area_def, output_path="debug_i04.png"):
     """
     Dump the I04 (MIR) band from an Albers-resampled satpy scene to an image.
     """
     i04 = scn_albers["I04"]
     data = i04.values  # numpy array, may contain NaNs
-    
+
     # Grab the projection from the area_def
     proj_dict = area_def.proj_dict
     crs = ccrs.AlbersEqualArea(
@@ -512,7 +534,7 @@ def debug_dump_i04(scn_albers, area_def, output_path="debug_i04.png"):
             proj_dict.get("lat_2", 45.5),
         )
     )
-    
+
     # Area extent in projection coordinates
     extent = [
         area_def.area_extent[0],  # x_min
@@ -520,12 +542,12 @@ def debug_dump_i04(scn_albers, area_def, output_path="debug_i04.png"):
         area_def.area_extent[1],  # y_min
         area_def.area_extent[3],  # y_max
     ]
-    
+
     fig, ax = plt.subplots(
         figsize=(10, 8),
         subplot_kw={"projection": crs}
     )
-    
+
     # Plot with a fire-appropriate colormap; clip to reasonable radiance range
     vmin, vmax = numpy.nanpercentile(data, [2, 98])
     im = ax.imshow(
@@ -537,15 +559,15 @@ def debug_dump_i04(scn_albers, area_def, output_path="debug_i04.png"):
         vmin=vmin,
         vmax=vmax,
     )
-    
+
     ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
     ax.add_feature(cfeature.BORDERS, linewidth=0.5, linestyle=":")
     ax.add_feature(cfeature.STATES, linewidth=0.3, edgecolor="gray")
-    
+
     plt.colorbar(im, ax=ax, label="Radiance (W·m⁻²·sr⁻¹·μm⁻¹)", shrink=0.7)
     ax.set_title(f"I04 MIR Band — orbit debug dump\n"
                  f"shape: {data.shape}  |  valid px: {numpy.sum(~numpy.isnan(data)):,}")
-    
+
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -556,7 +578,7 @@ def main():
     logging.info("Beginning processing")
     sat, files = load_file_list()
     logging.info(f"Found {len(files)} fileset(s) of type {sat} to process")
-    
+
     # Create an area definition covering "Alaska"
     crs = CRS.from_proj4(
         "+proj=aea +lat_0=50 +lon_0=-154 +lat_1=55 +lat_2=65 +datum=NAD83 +units=m"
