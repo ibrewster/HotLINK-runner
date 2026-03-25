@@ -643,9 +643,10 @@ def main():
             future_files = {}
 
             for loc in LOCATIONS:
-                loc_redis_key = set(REDIS_DB.keys(f"{volc_name}:*"))
-                if f"{volc_name}:{orbit}" in loc_redis_key:
-                    logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
+                # loc may be different than the volc name used in the DB, but might as well check.
+                loc_redis_key = set(REDIS_DB.keys(f"{loc}:*"))
+                if f"{loc}:{orbit}" in loc_redis_key:
+                    logging.info(f"Orbit {orbit} has already been processed for volcano {loc}. Skipping.")
                     continue
                 
                 logging.debug(f"Submitting {orbit} for {loc}")
