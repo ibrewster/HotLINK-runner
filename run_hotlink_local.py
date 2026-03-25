@@ -211,6 +211,18 @@ def generate_mir_image(img, title, volc, hotspot_mask):
     utm_crs = ccrs.UTM(zone=zone_number, southern_hemisphere=(volc_lat < 0))
 
     x0, y0, x1, y1 = volc_area.area_extent  # (x_ll, y_ll, x_ur, y_ur)
+    
+    img_height, img_width = img.shape[:2]
+    mask_height, mask_width = hotspot_mask.shape
+
+    row_offset = (img_height - mask_height) // 2
+    col_offset = (img_width - mask_width) // 2
+
+    # UTM extent of the zoomed (mask-sized) region
+    zx0 = x0 + (col_offset / (img_width - 1)) * (x1 - x0)
+    zx1 = x0 + ((col_offset + mask_width - 1) / (img_width - 1)) * (x1 - x0)
+    zy1 = y1 + (row_offset / (img_height - 1)) * (y0 - y1)
+    zy0 = y1 + ((row_offset + mask_height - 1) / (img_height - 1)) * (y0 - y1)
 
     has_hotspot = hotspot_mask.any()
 
@@ -261,25 +273,14 @@ def generate_mir_image(img, title, volc, hotspot_mask):
     im0 = setup_axis(ax0, x0, x1, y0, y1)
     fig.colorbar(im0, ax=ax0, shrink=0.7, label="Brightness Temperature (ºC)")
     set_latlon_ticks(ax0, x0, x1, y0, y1, volc_lon, volc_lat)
-    ax0.add_feature(cfeature.COASTLINE, linewidth=0.8)
+    ax0.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8)
     ax0.set_title(title)
 
     if has_hotspot:
 
         ax1 = axes[1]
-        img_height, img_width = img.shape[:2]
-        mask_height, mask_width = hotspot_mask.shape
 
-        row_offset = (img_height - mask_height) // 2
-        col_offset = (img_width - mask_width) // 2
-
-        # UTM extent of the zoomed (mask-sized) region
-        zx0 = x0 + (col_offset / (img_width - 1)) * (x1 - x0)
-        zx1 = x0 + ((col_offset + mask_width - 1) / (img_width - 1)) * (x1 - x0)
-        zy1 = y1 + (row_offset / (img_height - 1)) * (y0 - y1)
-        zy0 = y1 + ((row_offset + mask_height - 1) / (img_height - 1)) * (y0 - y1)
-
-        im1 = setup_axis(ax1, zx0, zx1, zy0, zy1)
+        im1 = setup_axis(ax1, x0, x1, y0, y1)
         fig.colorbar(im1, ax=ax1, shrink=0.7, label="Brightness Temperature (ºC)")
 
         contours = support_functions.find_contours(hotspot_mask, level=0.5)
@@ -299,8 +300,8 @@ def generate_mir_image(img, title, volc, hotspot_mask):
                 transform=utm_crs,  # tell cartopy these are UTM coords
             )
 
-        set_latlon_ticks(ax1, zx0, zx1, zy0, zy1, volc_lon, volc_lat)
-        ax1.add_feature(cfeature.COASTLINE, linewidth=0.8)
+        set_latlon_ticks(ax1, x0, x1, y0, y1, volc_lon, volc_lat)
+        ax1.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8)
         ax1.set_title(f"{title} — hotspot detail")
 
     fig.tight_layout()
@@ -642,6 +643,11 @@ def main():
             future_files = {}
 
             for loc in LOCATIONS:
+                loc_redis_key = set(REDIS_DB.keys(f"{volc_name}:*"))
+                if f"{volc_name}:{orbit}" in loc_redis_key:
+                    logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
+                    continue
+                
                 logging.debug(f"Submitting {orbit} for {loc}")
                 future = executor.submit(
                     process_volc,
@@ -686,7 +692,7 @@ def main():
                     # Mark this file as having been attempted, so we don't try it again
                     exc_type, _, _ = sys.exc_info()
                     if exc_type is None and mark_processed:
-                        REDIS_DB.setex(f"{volc}:{orbit}", 129600, "1")
+                        REDIS_DB.setex(f"{volc}:{orbit}", 432000, "1")
 
                 if not results.empty and meta['Result Count'] > 0:
                     # Add the orbit number to the results
@@ -702,7 +708,7 @@ def main():
                 logging.info("----------------------------------")
 
             if all_processed:
-                REDIS_DB.setex(redis_key, 129600, "1")
+                REDIS_DB.setex(redis_key, 432000, "1")
             logging.info(f"All locations processed for orbit {orbit}, saved {saved_records} new records (out of {len(futures)} locations)")
 
     logging.info(f"All orbits processed in {time.time()-t0}.")
