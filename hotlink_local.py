@@ -131,27 +131,21 @@ def extract_datetime(filename: pathlib.PosixPath) -> str:
     return f"{date_part}T{time_part}"
 
 
-def resample(
-    area: geometry.AreaDefinition,
-    scn: Scene,
-    out_file: str,
-) -> None:
+def resample(area: geometry.AreaDefinition, scn: Scene) -> numpy.ndarray:
     """
     Load datasets, resample to a specified area, and save the combined data to a file.
     Resampled data file will be in UTM.
 
-    Parameters ---------- area : geometry.AreaDefinition The area to which the data should be
-    resampled. scn : satpy.Scene The loaded satpy.Scene to be resampled out_file : str Path to
-    the output file where the resampled data will be saved.
+    Parameters
+    ----------
+    area : geometry.AreaDefinition The area to which the data should be
+    resampled.
+    scn : satpy.Scene The loaded satpy.Scene to be resampled
 
     Returns
     -------
-    None
-        Output is saved to a Numpy file.
-
-    Notes
-    -----
-    - source files are deleted after processing.
+    numpy.ndarray:
+        The resampled and cropped scene, as a numpy array
 
     Warnings
     --------
@@ -185,7 +179,8 @@ def resample(
         tir[numpy.isnan(tir)] = numpy.nanmin(tir)
 
         data = numpy.dstack((mir, tir))
-        numpy.save(out_file, data)
+        
+        return data        
     except NotImplementedError:
         raise CoverageError(f"Area of interest lies at least partially outside the scene")
     finally:
@@ -197,34 +192,20 @@ def resample(
 
         gc.collect()
 
+
 def test_img(img):
     import matplotlib.pyplot as plt
     plt.imshow(img)
     plt.savefig('/Users/israel/Downloads/test.png')
     
-def preprocess(
-    vent,
-    scn,
-    sat,
-    folder='./data',
-    output=pathlib.Path('./Output')
-):
-    dest = pathlib.Path(folder)
-
+def preprocess( vent, scn, sat):
     area=area_definition('name',vent,sat)
 
     t1 = time.time()
     logging.info("Beginning resampling")
 
-    out_file =  _gen_output_name(dest, scn.start_time)
     try:
-        resample(area, scn, out_file)
-        meta = {
-            out_file.name: {
-                'satelite': scn['I04'].attrs['platform_name'],
-                'sensor': sat,
-            }
-        }
+        data = resample(area, scn)
     except (CoverageError, AgeError):
         raise
 
@@ -234,7 +215,7 @@ def preprocess(
 
     logging.info(f"Resampling complete in {time.time() - t1} seconds")
 
-    return meta
+    return data
 
 
 def get_results(
@@ -350,14 +331,10 @@ def get_results(
     data_path.mkdir(exist_ok = True)
 
     logging.info("Processing files...")
-    download_meta = preprocess(
-        vent,
-        scn,
-        sensor,
-        folder = data_path,
-        output=output_dir
-    )
-
+    raw_data = preprocess(vent, scn, sensor)
+    img_dates = [scn.start_time, ]
+    satelite = scn['I04'].attrs['platform_name']
+    
     logging.info("Image files processed. Beginning calculations")
 
     # Set some constants based on sensor
@@ -375,40 +352,14 @@ def get_results(
 
     # Calculate the GeoTransform for output images
     center_x, center_y, utm_zone, utm_lat_band = utm.from_latlon(*vent)
-    # resolution = 1000 if sensor.upper() == 'MODIS' else 375
-    # size = 24
-    # transform = rasterio.transform.from_origin(center_x - (size / 2) * resolution,
-                                               # center_y + (size / 2) * resolution,
-                                               # resolution, resolution)
 
-    # hemisphere = hemisphere = " +south" if utm_lat_band < 'N' else ""
-
-    # crs = f"+proj=utm +zone={utm_zone}{hemisphere} +datum=WGS84 +units=m +no_defs"
     meta['UTM Zone'] = utm_zone
     meta['UTM Latitude Band'] = utm_lat_band
 
-    data_files = list(data_path.glob('*.npy'))
-
-    if not data_files:
-        logging.warning("No data files to process.")
-        # Define the expected columns for an empty DataFrame
-        expected_columns = [
-            'Data File', 'Number Hotspot Pixels', 'Hotspot Radiative Power (W)',
-            'MIR Hotspot Brightness Temperature', 'MIR Background Brightness Temperature',
-            'MIR Hotspot Max Brightness Temperature', 'TIR Hotspot Brightness Temperature',
-            'TIR Background Brightness Temperature', 'TIR Hotspot Max Brightness Temperature',
-            'Day/Night Flag', 'Solar Zenith', 'Solar Azimuth', 'Date', 'Max Probability',
-            'Pixels Above 0.5 Probability', 'Sensor', 'Volcano ID', 'Satellite', 'Data URL'
-        ]
-        # Return an empty DataFrame with the expected structure
-        empty_results = pandas.DataFrame(columns=expected_columns)
-        # Update meta with the failure reason and end time
-        meta['Result Count'] = 0
-        meta['Error'] = "No .npy files found in the data directory"
-        meta['Run End'] = datetime.now(UTC).isoformat()
-        return empty_results, meta
-
-    img_data, img_dates = hotlink.process.load_data_files(data_files)
+    output_shape = (1, *raw_data.shape)
+    img_data = numpy.empty(output_shape, dtype=raw_data.dtype)
+    img_data[0] = raw_data
+    
     # Make sure there are no missing pixels
     mir_data = img_data[:, :, :, 0] # creates a view
     tir_data = img_data[:, :, :, 1]
@@ -453,17 +404,11 @@ def get_results(
     max_prob = numpy.round(numpy.max(prob_active, axis=(1, 2)), 3)
     prob_above_05 = numpy.count_nonzero(prob_active>0.5, axis=(1, 2))
 
-    process_progress = tqdm(
-        total=img_data.shape[0],
-        desc="CALCULATING RESULTS"
-    )
-
     def _run_calcs(idx):
         result = {}
-        img_file = data_files[idx]
         image_date = img_dates[idx]
 
-        result['Data File'] = img_file.name
+        result['Data File'] = image_date.strftime('%Y%m%d_%H%M.npy')
 
         hotspot_mask = hotlink.process.apply_hysteresis_threshold(prob_active[idx], low=0.4, high=0.5).astype('bool')
         hotspot_pixels = numpy.count_nonzero(hotspot_mask)
@@ -504,14 +449,13 @@ def get_results(
         result['Solar Azimuth'] = round(sol_azimuth, 1)
         result['Hotspot Mask'] = hotspot_mask
 
-        process_progress.update()
         return result
 
-    # Not sure if this is really needed, as this loop is fast, but might
-    # speed things up a bit.
-    with ThreadPoolExecutor() as executor:
-        results = executor.map(_run_calcs, range(img_data.shape[0]))
 
+    results = [_run_calcs(0)] # Keep as a list to make the rest of the code happy.
+    # TODO: major refactor, make all of this just expect a single result.
+    # Not worth the time, but might make things a bit cleaner.
+    
     results = pandas.DataFrame(results)
     results.reset_index(drop=True, inplace=True)
 
@@ -523,18 +467,8 @@ def get_results(
     results['Sensor'] = sensor.upper()
     results['Volcano ID'] = volc.iloc[0]['id']
 
-    # pull in metadata retrieved during the download
-    file_meta = results['Data File'].map(lambda x: download_meta.get(x, {}))
-    results['Satellite'] = file_meta.map(lambda x: x.get('satelite'))
+    results['Satellite'] = satelite
     results['MIRImage'] = list(support_functions.brightness_temperature(mir_data*1e6, wl=MIR_WL))
-
-    for idx, (image_date, img_file) in tqdm(
-        enumerate(zip(img_dates, data_files)),
-        total=len(img_dates),
-        unit="IMAGES",
-        desc="SAVING IMAGES"
-    ):
-        img_file.unlink(missing_ok=True)
 
     meta['Result Count'] = len(results)
 
