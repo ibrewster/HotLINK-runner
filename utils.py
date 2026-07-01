@@ -1,9 +1,14 @@
 from contextlib import contextmanager
+from dataclasses import dataclass
+from functools import lru_cache
 
 import config
 
+import pandas
 import psycopg
 import redis
+
+from hotlink import support_functions
 
 REDIS_DB = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
@@ -58,3 +63,55 @@ def interpret_rections(signals: set[str]):
     true_positive = True if signals else None
 
     return true_positive, source
+
+@lru_cache(maxsize=None)
+def load_volcs():
+    # Load volcanoes from the PREEVENTS database
+    with preevents_cursor() as cursor:
+        cursor.execute("""
+                       SELECT longitude    as lon,
+                              latitude     as lat,
+                              volcano_name as name,
+                              elevation    as elev,
+                              volcano_id   as id
+                       FROM volcano
+                       WHERE observatory = 'avo'
+                       """)
+
+        columns = [desc.name for desc in cursor.description]
+        data = pandas.DataFrame(cursor.fetchall(), columns=columns)
+
+    return data
+
+@dataclass(frozen=True)
+class Volcano:
+    id: int
+    name: str
+    lat: float
+    lon: float
+    elev: int
+
+    @property
+    def coords(self) -> tuple[float, float]:
+        return self.lat, self.lon
+
+
+@lru_cache(None)
+def get_volc(vent: str | list | tuple) -> Volcano:
+    VOLCS = load_volcs()
+    if isinstance(vent, str):
+        volc = VOLCS[VOLCS['name'].str.lower() == vent.lower()]
+        if len(volc) == 0:
+            raise ValueError(f"Specified volcano ({vent}) not found!. Candidates:\n{sorted(VOLCS['name'])}")
+    else:
+        dists = support_functions.haversine_np(vent[1], vent[0], VOLCS['lon'], VOLCS['lat'])
+        volc = VOLCS[dists == dists.min()]
+
+    row = volc.iloc[0]
+    return Volcano(
+        id=row.id,
+        name=str(row.name),
+        lat=row.lat,
+        lon=row.lon,
+        elev=row.elev,
+    )

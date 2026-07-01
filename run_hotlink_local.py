@@ -10,7 +10,7 @@ import logging
 logging.basicConfig(
     level=logging.INFO,    # Set the minimum level to capture (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     format='%(asctime)s - %(levelname)s - %(message)s',  # Define the structure
-    datefmt='%Y-%m-%d %H:%M:%S'  # Optional: simplies the timestamp format
+    datefmt='%Y-%m-%d %H:%M:%S'  # Optional: simplifies the timestamp format
 )
 
 import json
@@ -21,14 +21,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from io import BytesIO
 from os.path import splitext
+from pathlib import Path
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from cartopy.mpl.geoaxes import GeoAxes
+
 
 import pandas
 import psycopg
 import utm
 
+from psycopg import sql # To make the checker happy, not actually needed/used
 from pyproj import Transformer, CRS
 from pyresample import create_area_def
 from pyresample.geometry import AreaDefinition
@@ -42,7 +46,7 @@ import matplotlib.pyplot as plt
 import config
 import hotlink_local
 import mattermost
-from utils import preevents_cursor, REDIS_DB
+from utils import preevents_cursor, REDIS_DB,Volcano,get_volc
 
 ########## CONSTANTS #########
 
@@ -100,28 +104,6 @@ DEVICE_ID_MAP = {
 
 #############################
 
-
-
-@lru_cache(maxsize=None)
-def load_volcs():
-    # Load volcanoes from the PREEVENTS database
-    with preevents_cursor() as cursor:
-        cursor.execute("""
-        SELECT
-            longitude as lon,
-            latitude as lat,
-            volcano_name as name,
-            elevation as elev,
-            volcano_id as id
-        FROM volcano
-        WHERE observatory='avo'
-        """)
-
-        columns = [desc.name for desc in cursor.description]
-        data = pandas.DataFrame(cursor.fetchall(), columns=columns)
-
-    return data
-
 @lru_cache(None)
 def get_datastream_mapping(location):
     query = """
@@ -150,19 +132,6 @@ def get_datastream_mapping(location):
     }
     return mapping
 
-@lru_cache(None)
-def get_volc(vent):
-    VOLCS = load_volcs()
-    if isinstance(vent, str):
-        volc = VOLCS[VOLCS['name'].str.lower()==vent.lower()]
-        if len(volc) == 0:
-            raise ValueError(f"Specified volcano ({vent}) not found!. Canidates:\n{sorted(VOLCS['name'])}")
-    else:
-        dists = support_functions.haversine_np(vent[1], vent[0], VOLCS['lon'], VOLCS['lat'])
-        volc = VOLCS[dists==dists.min()]
-
-    return volc.iloc[0]
-
 def get_start(datastreams):
     # Group datastream_ids by sensor
     viirs = DEVICE_ID_MAP['viirs']
@@ -175,8 +144,8 @@ def get_start(datastreams):
     latest_timestamps = {}
 
     # Timestamps in the database are based on the filename, which is in
-    # turn based on pass start. Searches, on the other hand, are based on
-    # pass *end*, which is somewhat later. Hopefully 15 minutes is sufficient,
+    # turn based on pass start time. Searches, on the other hand, are based on
+    # pass *end* time, which is somewhat later. Hopefully 15 minutes is sufficient,
     # but we may need to adjust.
     QUERY = """
     SELECT COALESCE(
@@ -219,10 +188,11 @@ def generate_mir_image(img, title, volc, hotspot_mask):
     col_offset = (img_width - mask_width) // 2
 
     # UTM extent of the zoomed (mask-sized) region
-    zx0 = x0 + (col_offset / (img_width - 1)) * (x1 - x0)
-    zx1 = x0 + ((col_offset + mask_width - 1) / (img_width - 1)) * (x1 - x0)
-    zy1 = y1 + (row_offset / (img_height - 1)) * (y0 - y1)
-    zy0 = y1 + ((row_offset + mask_height - 1) / (img_height - 1)) * (y0 - y1)
+    # Useful if we want to make an image of ONLY the zoomed region
+    # zx0 = x0 + (col_offset / (img_width - 1)) * (x1 - x0)
+    # zx1 = x0 + ((col_offset + mask_width - 1) / (img_width - 1)) * (x1 - x0)
+    # zy1 = y1 + (row_offset / (img_height - 1)) * (y0 - y1)
+    # zy0 = y1 + ((row_offset + mask_height - 1) / (img_height - 1)) * (y0 - y1)
 
     has_hotspot = hotspot_mask.any()
 
@@ -233,7 +203,7 @@ def generate_mir_image(img, title, volc, hotspot_mask):
         subplot_kw={"projection": utm_crs} # display in UTM
     )
     if not has_hotspot:
-        axes = [axes]  # normalise to list for uniform access below
+        axes = [axes]  # normalize to list for uniform access below
 
     def setup_axis(ax, ex0, ex1, ey0, ey1):
         ax.set_extent([ex0, ex1, ey0, ey1], crs=utm_crs)
@@ -250,7 +220,15 @@ def generate_mir_image(img, title, volc, hotspot_mask):
 
     transformer = Transformer.from_crs(utm_crs, "EPSG:4326", always_xy=True)
 
-    def set_latlon_ticks(ax, ex0, ex1, ey0, ey1, centre_lon, centre_lat):
+    def set_latlon_ticks(
+            ax:GeoAxes,
+            ex0:float,
+            ex1:float,
+            ey0:float,
+            ey1:float,
+            centre_lon:float,
+            centre_lat:float
+    ):
         cx, cy = transformer.transform(centre_lon, centre_lat, direction='INVERSE')
         x_ticks = numpy.linspace(ex0, ex1, 3)
         y_ticks = numpy.linspace(ey0, ey1, 3)
@@ -381,7 +359,7 @@ def save_results(results, mapping):
 
             # Save the value records
             for result_key in VARIABLE_ID_MAP.keys():
-                if result_key in row and not pandas.isna(row[result_key]):
+                if result_key in row and pandas.notna(row[result_key]):
                     key = (result_key, sensor)
                     datastream_id = mapping.get(key)
                     if datastream_id:
@@ -392,7 +370,7 @@ def save_results(results, mapping):
                             datafield = "datavalue"
                             datavalue = float(row[result_key])
 
-                        sql = psycopg.sql.SQL("""
+                        insert_sql = psycopg.sql.SQL("""
                             INSERT INTO datavalues (datastream_id, timestamp, {datafield}, last_updated)
                             VALUES (%s, %s, %s, now())
                             ON CONFLICT (datastream_id, timestamp)
@@ -401,7 +379,7 @@ def save_results(results, mapping):
                                    datafield = psycopg.sql.Identifier(datafield)
                             )
                         cursor.execute(
-                            sql,
+                            insert_sql,
                             (datastream_id, timestamp, datavalue)
                         )
                     else:
@@ -412,10 +390,9 @@ def load_file_list() -> pandas.DataFrame:
     # Get a list of files
     input_path = pathlib.Path(config.DATA_PATH)
     df = None
-    sat = None
 
     if not input_path.exists():
-        return sat, [] # No input directory, no input files
+        return pandas.DataFrame() # No input directory, no input files
 
     files = pandas.DataFrame(
         [
@@ -427,7 +404,6 @@ def load_file_list() -> pandas.DataFrame:
 
     viirs_keys = {'SVI04', 'SVI05', 'GITCO'}
     if viirs_keys.issubset(files['type'].tolist()):
-        sat = 'viirs'
         df = hotlink_local.match_viirs(
             files[files['type']=='SVI04']['path'],
             files[files['type']=='SVI05']['path'],
@@ -435,18 +411,17 @@ def load_file_list() -> pandas.DataFrame:
         )
 
     if df is None or df.empty:
-        return sat, pandas.DataFrame()
+        return pandas.DataFrame()
 
-    return sat, df
+    return df
 
 def file_key(file):
     filename = pathlib.Path(file).name
     return "_".join(filename.split('_')[1:6])
 
-def process_volc(loc: str|list, orbit, db, scn_albers, sat):
-    volc_info = get_volc(loc)
-    elev = volc_info['elev']
-    volc_name = volc_info['name']
+def process_volc(volc_info: Volcano, orbit, db, scn_albers):
+    elev = volc_info.elev
+    volc_name = volc_info.name
 
     datastream_mapping = get_datastream_mapping(volc_name)
     if not datastream_mapping:
@@ -458,7 +433,7 @@ def process_volc(loc: str|list, orbit, db, scn_albers, sat):
         logging.info(f"Orbit {orbit} has already been processed for volcano {volc_name}. Skipping.")
         return None, volc_name, None
 
-    result = hotlink_local.get_results(loc, elev, scn_albers, sat)
+    result = hotlink_local.get_results(volc_info, elev, scn_albers)
     return result, volc_name, datastream_mapping
 
 
@@ -474,6 +449,7 @@ def debug_dump_swath(scn, output_path="debug_i04_swath.png"):
     lons = dask.array.Array.compute(lons)
     lats = dask.array.Array.compute(lats)
 
+    ax:GeoAxes
     fig, ax = plt.subplots(
         figsize=(12, 10),
         subplot_kw={"projection": ccrs.AlbersEqualArea(
@@ -523,7 +499,7 @@ def debug_dump_i04(scn_albers, area_def, output_path="debug_i04.png"):
     Dump the I04 (MIR) band from an Albers-resampled satpy scene to an image.
     """
     i04 = scn_albers["I04"]
-    data = i04.values  # numpy array, may contain NaNs
+    data = i04.values  # numpy array; may contain NaNs
 
     # Grab the projection from the area_def
     proj_dict = area_def.proj_dict
@@ -537,13 +513,14 @@ def debug_dump_i04(scn_albers, area_def, output_path="debug_i04.png"):
     )
 
     # Area extent in projection coordinates
-    extent = [
+    extent = (
         area_def.area_extent[0],  # x_min
         area_def.area_extent[2],  # x_max
         area_def.area_extent[1],  # y_min
         area_def.area_extent[3],  # y_max
-    ]
+    )
 
+    ax:GeoAxes
     fig, ax = plt.subplots(
         figsize=(10, 8),
         subplot_kw={"projection": crs}
@@ -577,8 +554,8 @@ def debug_dump_i04(scn_albers, area_def, output_path="debug_i04.png"):
 def main():
     t0 = time.time()
     logging.info("Beginning processing")
-    sat, files = load_file_list()
-    logging.info(f"Found {len(files)} fileset(s) of type {sat} to process")
+    files = load_file_list()
+    logging.info(f"Found {len(files)} fileset(s) of type VIIRS to process")
 
     # Create an area definition covering "Alaska"
     crs = CRS.from_proj4(
@@ -603,10 +580,10 @@ def main():
         resolution=371,
         units="m",
     )
-    # area_def = AreaDefinition.from_epsg(3338, resolution=371)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         orbit_groups = files.groupby("orbit", sort=False)
+        orbit:int
         for orbit, group in orbit_groups:
             redis_key = f"processed:{orbit}"
             if REDIS_DB.exists(redis_key):
@@ -619,9 +596,11 @@ def main():
 
             all_processed = True
             logging.info(f"Loading files for orbit {orbit}")
-            file_list = list(
+            file_list:list[Path] = (
                 group[["file_1", "file_2", "file_3"]]
                 .stack()
+                .to_numpy()
+                .tolist()
             )
 
             scn=Scene(reader='viirs_sdr',filenames=[str(f.absolute()) for f in file_list])
@@ -643,20 +622,20 @@ def main():
             future_files = {}
 
             for loc in LOCATIONS:
-                # loc may be different than the volc name used in the DB, but might as well check.
-                loc_redis_key = set(REDIS_DB.keys(f"{loc}:*"))
-                if f"{loc}:{orbit}" in loc_redis_key:
+                volc_info=get_volc(loc)
+                volc_name=volc_info.name
+                loc_redis_key = set(REDIS_DB.keys(f"{volc_name}:*"))
+                if f"{volc_name}:{orbit}" in loc_redis_key:
                     logging.info(f"Orbit {orbit} has already been processed for volcano {loc}. Skipping.")
                     continue
                 
                 logging.debug(f"Submitting {orbit} for {loc}")
                 future = executor.submit(
                     process_volc,
-                    loc,
+                    volc_info,
                     orbit,
                     REDIS_DB,
-                    scn_albers,
-                    sat
+                    scn_albers
                 )
 
                 future_files[future] = (orbit, loc)
@@ -678,9 +657,9 @@ def main():
 
                     results, meta = hotlink_result
                 except hotlink_local.CoverageError as e:
-                    logging.info(f"Insufficient coverage for volcano {volc}, {sat}. {e} (orbit {orbit})")
+                    logging.info(f"Insufficient coverage for volcano {volc}, VIIRS. {e} (orbit {orbit})")
                     continue
-                except hotlink_local.AgeError as e:
+                except hotlink_local.AgeError:
                     logging.info(f"Orbit {orbit} older than most recent results for {volc}. Skipping.")
                     continue
                 except Exception as e:
@@ -693,7 +672,7 @@ def main():
                     # Mark this file as having been attempted, so we don't try it again
                     exc_type, _, _ = sys.exc_info()
                     if exc_type is None and mark_processed:
-                        REDIS_DB.setex(f"{volc}:{orbit}", 432000, "1")
+                        REDIS_DB.set(f"{volc}:{orbit}", "1", ex=432000)
 
                 if not results.empty and meta['Result Count'] > 0:
                     # Add the orbit number to the results
@@ -703,13 +682,13 @@ def main():
                     saved_records += 1
                     logging.info(f"Saved results for {volc} - orbit {orbit}")
                 else:
-                    logging.info(f"No results to save for orbit {orbit}, {volc} {sat}")
+                    logging.info(f"No results to save for orbit {orbit}, {volc} VIIRS")
 
                 logging.info(f"Ran HotLINK for {volc}, orbit {orbit} ({process_idx}/{len(futures)})")
                 logging.info("----------------------------------")
 
             if all_processed:
-                REDIS_DB.setex(redis_key, 432000, "1")
+                REDIS_DB.set(redis_key, "1", ex=432000)
             logging.info(f"All locations processed for orbit {orbit}, saved {saved_records} new records (out of {len(futures)} locations)")
 
     logging.info(f"All orbits processed in {time.time()-t0}.")

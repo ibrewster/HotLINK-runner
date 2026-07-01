@@ -5,8 +5,8 @@ import re
 import time
 import warnings
 
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, UTC
+from typing import Any
 
 import hotlink
 import numpy
@@ -18,9 +18,9 @@ from hotlink.preprocess import area_definition
 from pyresample import geometry
 
 from satpy import Scene
-from tqdm import tqdm
 
 import config
+from utils import Volcano, get_volc
 
 input_path = pathlib.Path('data')
 MODEL = hotlink.process.load_hotlink_model()
@@ -40,12 +40,12 @@ def _gen_output_name(dest, files_or_date):
     out_file =  dest / img_date.strftime('%Y%m%d_%H%M.npy')
     return out_file
 
+
 # Function to get the match key, with substitution for list1
-def get_match_key(granule, substitute_prefix=False):
+def get_match_key(granule):
     """
         Get a string to match the associated VIIRS file on. Works with filesystem paths (str or pathlib.Path)
     """
-
     url = str(granule)
 
     filename = url.split("/")[-1]  # Extract filename from URL
@@ -79,14 +79,18 @@ def viirs_start_end_from_name(p: pathlib.Path) -> tuple[datetime | None, datetim
     return start, end
 
 
-def match_viirs(mir_files: list | tuple, tir_files: list | tuple, geog_files: list | tuple) -> pandas.DataFrame:
+def match_viirs(
+        mir_files: list | tuple | pandas.Series,
+        tir_files: list | tuple | pandas.Series,
+        geog_files: list | tuple | pandas.Series
+) -> pandas.DataFrame:
     """
         Match the VIIRS products, checking the file names since the two result
         lists may not match 1:1
     """
     mir_data = [{
         "file": g,
-         "match_key": get_match_key(g, substitute_prefix=True)
+         "match_key": get_match_key(g)
     } for g in mir_files]
 
     df = pandas.DataFrame(mir_data)
@@ -95,7 +99,7 @@ def match_viirs(mir_files: list | tuple, tir_files: list | tuple, geog_files: li
 
     tir_data = [{
         "file": g,
-        "match_key": get_match_key(g, substitute_prefix=False)
+        "match_key": get_match_key(g)
     } for g in tir_files]
 
 
@@ -105,7 +109,7 @@ def match_viirs(mir_files: list | tuple, tir_files: list | tuple, geog_files: li
 
     geog_data = [{
         "file": g,
-        "match_key": get_match_key(g, substitute_prefix=False)
+        "match_key": get_match_key(g)
     } for g in geog_files]
 
     df_geog = pandas.DataFrame(geog_data)
@@ -151,7 +155,7 @@ def resample(area: geometry.AreaDefinition, scn: Scene) -> numpy.ndarray:
     --------
     - Warnings related to inefficient chunking operations are suppressed.
     """
-    # Loading the scene results in warnings about an ineficient chunking operations
+    # Loading the scene results in warnings about inefficient chunking operations
     # Since this is SatPy, and we can't do anything about it, just ignore the warnings.
     warnings.simplefilter("ignore", UserWarning)
     datasets = ['I04','I05'] # VIIRS, mir/tir
@@ -186,9 +190,13 @@ def resample(area: geometry.AreaDefinition, scn: Scene) -> numpy.ndarray:
     finally:
         # Probably overkill cleanup, but I've had issues with "too many open files"
         # in this code, so I'm not taking any chances here.
-        if 'cropscn' in locals():
+        try:
+            # noinspection PyUnboundLocalVariable
+            # Seriously, PyCharm, I KNOW it might be unbound. That's why I catch that error!
             cropscn.unload()
             del mir, tir, cropscn
+        except (UnboundLocalError, NameError):
+            pass
 
         gc.collect()
 
@@ -219,13 +227,11 @@ def preprocess( vent, scn, sat):
 
 
 def get_results(
-    vent: str | tuple[float, float],
+    volcano: str | tuple[float, float] | Volcano,
     elevation: int,
     scn: Scene,
-    sensor: str,
     out_dir: str | pathlib.Path | None = None
-) -> (pandas.DataFrame, dict):
-
+) -> tuple[pandas.DataFrame, dict]:
     """
     Retrieve and process satellite images for a given volcano and date range.
 
@@ -236,17 +242,14 @@ def get_results(
 
     Parameters
     ----------
-    vent : str | tuple[float, float]
+    volcano : str | tuple[float, float] | Volcano
         The name of the volcano (e.g., "Shishaldin") or the coordinates of
-        the vent as a tuple (latitude, longitude).
+        the volcano as a tuple (latitude, longitude), or a pre-populated Volcano
+        object containing the above
     elevation : int
         The elevation of the vent in meters above sea level.
-    files : list[pathlib.PosixPath]
-        A list of files to process for this location.
-    sensor : str
-        The satellite sensor to retrieve data from. Must be one of:
-        - 'viirs': Visible Infrared Imaging Radiometer Suite
-        - 'modis': Moderate Resolution Imaging Spectroradiometer
+    scn: Scene
+        A Scene object, containing the data to analyze
     out_dir : str | Path, default "Output/{sensor}"
         The directory in which to save output image products. Will be created
         if it does not exist.
@@ -255,7 +258,7 @@ def get_results(
     -------
     results: pandas.DataFrame
         A DataFrame containing the processed results for each image. Each row
-        corresponds to an  input image and includes model output.
+        corresponds to an input image and includes model output.
     meta: dict
         A Dictionary containing metadata about the run
 
@@ -272,56 +275,47 @@ def get_results(
 
     Examples
     --------
-    >>> results = get_results(
+    >>> result = get_results(
     ...     vent="Shishaldin",
     ...     elevation=2550,
     ...     dates=("2019-01-01", "2019-12-31"),
-    ...     sensor="viirs",
     ...     out_dir="Output Images"
     ... )
-    >>> logging.info(results)
+    >>> logging.info(result)
 
-    >>> results = get_results(
+    >>> result = get_results(
     ...     vent=(54.7554, -163.9711),
     ...     elevation=2550,
     ...     dates=("2019-01-01", "2019-12-31"),
-    ...     sensor="viirs"
     ... )
     >>> logging.info(results)
     """
     # local import to avoid circular imports
-    from run_hotlink_local import load_volcs
     sensor = 'VIIRS'
 
-    meta = {
-        'Vent': vent,
+    meta: dict[str,Any] = {
         'Elevation': elevation,
         'Sensor': sensor,
         'Run Start': datetime.now(UTC).isoformat(),
     }
 
-    volcs = load_volcs()
+    if not isinstance(volcano,Volcano):
+        volcano=get_volc(volcano)
 
-    if isinstance(vent, str):
-        volc = volcs[volcs['name']==vent]
-        if len(volc) == 0:
-            raise ValueError("Specified volcano not found!")
-        vent = (volc.iloc[0]['lat'], volc.iloc[0]['lon'])
-    else:
-        dists = support_functions.haversine_np(vent[1], vent[0], volcs['lon'], volcs['lat'])
-        volcs.loc[:, 'dist'] = dists
-        volc = volcs[volcs['dist']==volcs['dist'].min()]
+    vent=volcano.coords
 
-    logging.info(f"Using volcano: {volc.iloc[0]['name']} location: {vent}")
+    meta['Vent']=vent
 
-    meta['Volcano Name'] = volc.iloc[0]['name']
-    meta['Volcano ID'] = volc.iloc[0]['id']
+    logging.info(f"Using volcano: {volcano.name} location: {vent}")
+
+    meta['Volcano Name'] = volcano.name
+    meta['Volcano ID'] = volcano.id
     meta['Center'] = vent
 
     if out_dir is None:
         out_dir = pathlib.Path("Output") / sensor
 
-    # Make sure this is a pathlib.Path object, and make sure it exists, creating it if needed.
+    # Make sure this is a pathlib.Path object and make sure it exists, creating it if needed.
     output_dir = pathlib.Path(out_dir).expanduser().resolve()
     output_dir.mkdir(parents = True, exist_ok = True)
 
@@ -332,7 +326,7 @@ def get_results(
 
     logging.info("Processing files...")
     raw_data = preprocess(vent, scn, sensor)
-    img_dates = [scn.start_time, ]
+    img_dates: list[datetime] = [scn.start_time ]
     satelite = scn['I04'].attrs['platform_name']
     
     logging.info("Image files processed. Beginning calculations")
@@ -404,9 +398,9 @@ def get_results(
     max_prob = numpy.round(numpy.max(prob_active, axis=(1, 2)), 3)
     prob_above_05 = numpy.count_nonzero(prob_active>0.5, axis=(1, 2))
 
-    def _run_calcs(idx):
+    def _run_calcs(idx:int):
         result = {}
-        image_date = img_dates[idx]
+        image_date:datetime = img_dates[idx]
 
         result['Data File'] = image_date.strftime('%Y%m%d_%H%M.npy')
 
@@ -431,7 +425,7 @@ def get_results(
         result['MIR Background Brightness Temperature'] = bg_mir_bt.mean().round(4)
         result['MIR Hotspot Max Brightness Temperature'] = hotspot_mir_bt.max().round(4) if hotspot_mir_bt.size > 0 else numpy.nan
 
-        # tir hotspot/background brigbhtness temerature analysis
+        # tir hotspot/background brightness temperature analysis
         hotspot_tir_bt = tir_bt[idx][hotspot_mask]
         bg_tir_bt = tir_bt[idx][~hotspot_mask]
 
@@ -465,7 +459,7 @@ def get_results(
 
     # Single values apply to all records
     results['Sensor'] = sensor.upper()
-    results['Volcano ID'] = volc.iloc[0]['id']
+    results['Volcano ID'] = volcano.id
 
     results['Satellite'] = satelite
     results['MIRImage'] = list(support_functions.brightness_temperature(mir_data*1e6, wl=MIR_WL))
