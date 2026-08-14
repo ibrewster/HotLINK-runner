@@ -77,7 +77,25 @@ LOCATIONS = [
     'Redoubt',
     'Spurr',
     'Veniaminof',
-    'Semisopochnoi'
+    'Semisopochnoi',
+    'Kupreanof',
+    'Iliamna',
+    'Aniakchak',
+    'Mageik',
+    'Trident',
+    'Douglas',
+    'Takawangha',
+    'Kliuchef',
+    'Fisher',
+    'Little Sitkin',
+    'Novarupta',
+    'Herbert',
+    'Buldir',
+    'Segula',
+    'Dana',
+    'Yantarni',
+#    'Kiliagvik',
+    'Fourpeaked',
 ]
 
 # dict to map the output column name to database variable name
@@ -335,7 +353,7 @@ def save_results(results, mapping):
             upload_resp = requests.post(
                 'https://preeventsdb.gi.alaska.edu/api/v1/uploads',
                 files={'file': (mir_filename, img_bytes, 'image/png')},
-                headers={'X-API-Key': config.PREEVENTS_UPLOAD_KEY}
+                headers={'X-API-Key': config.PREEVENTS_UPLOAD_KEY}, verify=False
             )
             if upload_resp.status_code == 200:
                 up_resp = upload_resp.json()
@@ -581,7 +599,7 @@ def main():
         units="m",
     )
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         orbit_groups = files.groupby("orbit", sort=False)
         orbit:int
         for orbit, group in orbit_groups:
