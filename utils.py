@@ -110,7 +110,7 @@ def get_volc(vent: str | list | tuple) -> Volcano:
     row = volc.iloc[0]
     return Volcano(
         id=row.id,
-        name=str(row.name),
+        name=str(row["name"]),
         lat=row.lat,
         lon=row.lon,
         elev=row.elev,

@@ -15,7 +15,14 @@ import config
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Makushin', 'Kasatochi']
+LOCATIONS = ['Akutan', 
+'Westdahl',
+'Kanaga',
+'Kiska',
+'Seguam',
+'Chiginagak',
+'Amukta'
+]
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
@@ -224,6 +231,8 @@ def save_results(results, mapping):
 
 
 def main():
+    no_data=1 # Global, for ANY location
+
     for loc in LOCATIONS:
         t1 = time.time()
 
@@ -238,7 +247,6 @@ def main():
         end_times = get_oldest(datastream_mapping)
         print(f"Oldest detected streams: {end_times}")
 
-        no_data=1
         for sensor in ['viirs']:
             sensor_id=DEVICE_ID_MAP[sensor]
             end_time = end_times[sensor_id].strftime('%Y-%m-%dT%H:%M:00')
@@ -255,7 +263,7 @@ def main():
                 print(f"No results to save for {volc_name} {sensor} in {dates}")
 
         print(f"Ran HotLINK for {loc} in {time.time() - t1} seconds")
-        return no_data
+    return no_data
 if __name__ == "__main__":
     exit_code=main()
     exit(exit_code)
