@@ -46,7 +46,7 @@ import matplotlib.pyplot as plt
 import config
 import hotlink_local
 import mattermost
-from utils import preevents_cursor, REDIS_DB,Volcano,get_volc
+from utils import preevents_cursor, REDIS_DB,Volcano,get_volc, load_volcs
 
 ########## CONSTANTS #########
 
