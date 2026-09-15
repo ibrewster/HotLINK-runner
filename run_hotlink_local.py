@@ -50,7 +50,7 @@ from utils import preevents_cursor, REDIS_DB,Volcano,get_volc, load_volcs
 
 ########## CONSTANTS #########
 
-LOCATIONS = [
+LOCATIONS = {
     'Iliamna',
     'Aniakchak',
     'Mageik',
@@ -79,10 +79,6 @@ LOCATIONS = [
     'Veniaminof',
     'Semisopochnoi',
     'Kupreanof',
-    'Iliamna',
-    'Aniakchak',
-    'Mageik',
-    'Trident',
     'Douglas',
     'Takawangha',
     'Kliuchef',
@@ -94,9 +90,9 @@ LOCATIONS = [
     'Segula',
     'Dana',
     'Yantarni',
-#    'Kiliagvik',
+#    'Kiliagvik', # Not in volcano database. We can't process this one until it is added.
     'Fourpeaked',
-]
+}
 
 # dict to map the output column name to database variable name
 VARIABLE_ID_MAP = {
