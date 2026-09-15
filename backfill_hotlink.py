@@ -3,25 +3,28 @@ import time
 
 from contextlib import contextmanager
 from datetime import timedelta
-from functools import lru_cache
 
 import hotlink
 import pandas
 import psycopg
 
 from hotlink import support_functions
+from utils import get_volc, load_volcs
 
 import config
 
 
 ########## CONSTANTS #########
-LOCATIONS = ['Akutan', 
-'Westdahl',
-'Kanaga',
-'Kiska',
-'Seguam',
-'Chiginagak',
-'Amukta'
+LOCATIONS = [
+'Kasatochi', 
+'Martin',
+'Kupreanof',
+'Iliamna',
+'Aniakchak',
+'Mageik',
+#'Trident',
+'Douglas'
+'Takawangha'
 ]
 
 # dict to map the output column name to database variable name
@@ -76,25 +79,25 @@ def preevents_cursor(readonly=True, autocommit=False):
     password = config.db_read_pass if readonly else config.db_write_pass
     return db_cursor(config.db_host, user, password, autocommit=autocommit)
 
-@lru_cache(maxsize=None)
-def load_volcs():
-    # Load volcanoes from the PREEVENTS database
-    with preevents_cursor() as cursor:
-        cursor.execute("""
-        SELECT
-            longitude as lon,
-            latitude as lat,
-            volcano_name as name,
-            elevation as elev,
-            volcano_id as id
-        FROM volcano
-        WHERE observatory='avo'
-        """)
-
-        columns = [desc.name for desc in cursor.description]
-        data = pandas.DataFrame(cursor.fetchall(), columns=columns)
-
-    return data
+# @lru_cache(maxsize=None)
+# def load_volcs():
+#     # Load volcanoes from the PREEVENTS database
+#     with preevents_cursor() as cursor:
+#         cursor.execute("""
+#         SELECT
+#             longitude as lon,
+#             latitude as lat,
+#             volcano_name as name,
+#             elevation as elev,
+#             volcano_id as id
+#         FROM volcano
+#         WHERE observatory='avo'
+#         """)
+#
+#         columns = [desc.name for desc in cursor.description]
+#         data = pandas.DataFrame(cursor.fetchall(), columns=columns)
+#
+#     return data
 
 # Use our volcano loader in hotlink
 hotlink.support_functions.load_volcanoes=load_volcs
@@ -127,17 +130,17 @@ def get_datastream_mapping(location):
     return mapping
 
 
-def get_volc(vent):
-    VOLCS = load_volcs()
-    if isinstance(vent, str):
-        volc = VOLCS[VOLCS['name'].str.lower()==vent.lower()]
-        if len(volc) == 0:
-            raise ValueError("Specified volcano not found!")
-    else:
-        dists = support_functions.haversine_np(vent[1], vent[0], VOLCS['lon'], VOLCS['lat'])
-        volc = VOLCS[dists==dists.min()]
-
-    return volc.iloc[0]
+# def get_volc(vent):
+#     VOLCS = load_volcs()
+#     if isinstance(vent, str):
+#         volc = VOLCS[VOLCS['name'].str.lower()==vent.lower()]
+#         if len(volc) == 0:
+#             raise ValueError("Specified volcano not found!")
+#     else:
+#         dists = support_functions.haversine_np(vent[1], vent[0], VOLCS['lon'], VOLCS['lat'])
+#         volc = VOLCS[dists==dists.min()]
+#
+#     return volc.iloc[0]
 
 
 def get_oldest(datastreams):
@@ -237,7 +240,11 @@ def main():
         t1 = time.time()
 
         # Make sure we are using the canonical volcano.
-        volc = get_volc(loc)
+        try:
+            volc = get_volc(loc)
+        except ValueError:
+            continue
+
         elev = volc['elev']
         volc_name = volc['name']
 
