@@ -245,8 +245,8 @@ def main():
         except ValueError:
             continue
 
-        elev = volc['elev']
-        volc_name = volc['name']
+        elev = volc.elev
+        volc_name = volc.name
 
         print("Getting datastreams for", volc_name)
         datastream_mapping = get_datastream_mapping(volc_name)
