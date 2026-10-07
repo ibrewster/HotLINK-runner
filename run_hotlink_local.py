@@ -90,8 +90,11 @@ LOCATIONS = {
     'Segula',
     'Dana',
     'Yantarni',
-#    'Kiliagvik', # Not in volcano database. We can't process this one until it is added.
     'Fourpeaked',
+    'Edgecumbe',
+    'Ugashik-Peulik',
+    'Ukinrek Maars',
+    'Yunaska'
 }
 
 # dict to map the output column name to database variable name
